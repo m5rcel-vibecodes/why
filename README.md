@@ -23,6 +23,7 @@
 - **Pipe & Stdin Friendly**: Pipe standard error or terminal logs directly into `why` (`command 2>&1 | why`).
 - **Structured JSON**: Ready for scripting and pipeline automation (`why "connection refused" --json` or `why log app.log --json`).
 - **Extensible Configuration**: Add internal team or proprietary error rules without recompilation using custom YAML rule directories.
+- **MCP Server**: Built-in [Model Context Protocol](https://modelcontextprotocol.io) server (`why mcp`) lets AI assistants like Claude Desktop, Cursor, and VS Code query the knowledge base over stdio—still fully local, zero network.
 
 ---
 
@@ -150,6 +151,155 @@ ERRORS DETECTED (ORDERED BY FREQUENCY):
       • sudo tail -n 30 /var/log/nginx/error.log
       • systemctl status <backend-service>
 ```
+
+---
+
+## MCP Server (`why mcp`)
+
+`why` includes a built-in [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server, allowing AI assistants like Claude Desktop, Cursor, VS Code Copilot, and other MCP-compatible clients to query the `why` knowledge base directly.
+
+The MCP server runs over **stdio** (no network required) and exposes three tools:
+
+| Tool | Description |
+|:---|:---|
+| `why_explain` | Explain an error message or code. Returns the same structured diagnostic output as the CLI. |
+| `why_inspect_log` | Scan log content for known error patterns and return an aggregated report. |
+| `why_list_categories` | List all available knowledge base categories and their rule counts. |
+
+### Starting the MCP Server
+
+```bash
+# Via subcommand
+why mcp
+
+# Alternative alias
+why serve-mcp
+
+# Via dedicated binary
+why-mcp
+```
+
+### Configuration Examples
+
+#### Claude Desktop
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "why": {
+      "command": "why",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+#### Cursor
+
+Add to `.cursor/mcp.json` in your project root or `~/.cursor/mcp.json` globally:
+
+```json
+{
+  "mcpServers": {
+    "why": {
+      "command": "why",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+#### VS Code (GitHub Copilot)
+
+Add to `.vscode/mcp.json` in your workspace:
+
+```json
+{
+  "servers": {
+    "why": {
+      "type": "stdio",
+      "command": "why",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+#### Using an Absolute Path
+
+If `why` is not in your `PATH`, use the absolute path to the binary:
+
+```json
+{
+  "mcpServers": {
+    "why": {
+      "command": "/usr/local/bin/why",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### MCP Tool Schemas
+
+<details>
+<summary><code>why_explain</code></summary>
+
+```json
+{
+  "name": "why_explain",
+  "description": "Explain a command-line error message or error code",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "error": {
+        "type": "string",
+        "description": "The error message or error code to explain"
+      }
+    },
+    "required": ["error"]
+  }
+}
+```
+</details>
+
+<details>
+<summary><code>why_inspect_log</code></summary>
+
+```json
+{
+  "name": "why_inspect_log",
+  "description": "Scan log content for known error patterns and return an aggregated report",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "content": {
+        "type": "string",
+        "description": "The log content to inspect"
+      }
+    },
+    "required": ["content"]
+  }
+}
+```
+</details>
+
+<details>
+<summary><code>why_list_categories</code></summary>
+
+```json
+{
+  "name": "why_list_categories",
+  "description": "List all available knowledge base categories and their rule counts",
+  "inputSchema": {
+    "type": "object",
+    "properties": {}
+  }
+}
+```
+</details>
 
 ---
 

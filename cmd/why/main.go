@@ -13,6 +13,7 @@ import (
 	"github.com/m5rcel-vibecodes/why/internal/kb"
 	"github.com/m5rcel-vibecodes/why/internal/logscan"
 	"github.com/m5rcel-vibecodes/why/internal/matcher"
+	"github.com/m5rcel-vibecodes/why/internal/mcp"
 	"github.com/m5rcel-vibecodes/why/internal/model"
 )
 
@@ -82,8 +83,17 @@ func main() {
 	}
 
 	ruleMatcher := matcher.New(knowledgeBase)
-
 	args := flag.Args()
+
+	// Check if user requested MCP server: e.g. `why mcp` or `why serve-mcp`
+	if len(args) > 0 && (args[0] == "mcp" || args[0] == "serve-mcp") {
+		server := mcp.NewServer(knowledgeBase, ruleMatcher, version)
+		if err := server.Serve(os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "why MCP server error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	// Check if user requested log inspection via subcommand or flag:
 	// e.g. `why log <file>` or `why log -` or `why --log <file>`
@@ -195,6 +205,7 @@ USAGE:
   why "<error message>"
   why <error message>
   why log <log-file-path>
+  why mcp
   <command> 2>&1 | why
   <command> 2>&1 | why log -
 
