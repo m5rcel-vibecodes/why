@@ -1,0 +1,204 @@
+rules:
+  - id: http-401-unauthorized
+    error: 401 Unauthorized
+    category: HTTP
+    meaning: The request requires valid user authentication credentials, but none were supplied or the credentials were invalid.
+    exact_matches:
+      - "401 unauthorized"
+      - "401"
+    patterns:
+      - '(?i)HTTP/(?:1\.[01]|2)\s+401(?:\s+Unauthorized)?'
+      - '(?i)status code 401'
+    error_codes:
+      - "401"
+    confirmed_templates:
+      - "HTTP Status Code: 401 Unauthorized"
+    likely_cause: Missing or expired API key, invalid Bearer token, or missing Authorization header in the HTTP request.
+    possible_causes:
+      - Authorization header omitted from request
+      - API token or session cookie expired
+      - Wrong authentication scheme (e.g. Bearer vs Basic)
+    diagnostic_steps:
+      - command: "curl -iv -H 'Authorization: Bearer <token>' <url>"
+        description: "Test request in verbose mode and inspect WWW-Authenticate challenge header"
+    potential_solutions:
+      - description: "Generate a fresh API token and include in request Authorization header"
+    warnings:
+      - "Never expose API tokens or credentials in shell history, logs, or public git repos."
+
+  - id: http-403-forbidden
+    error: 403 Forbidden
+    category: HTTP
+    meaning: The server understood the identity of the client, but refuses to authorize access to the requested resource.
+    exact_matches:
+      - "403 forbidden"
+      - "403"
+    patterns:
+      - '(?i)HTTP/(?:1\.[01]|2)\s+403(?:\s+Forbidden)?'
+      - '(?i)status code 403'
+    error_codes:
+      - "403"
+    confirmed_templates:
+      - "HTTP Status Code: 403 Forbidden"
+    likely_cause: The authenticated user or token lacks sufficient role-based permissions, or access was blocked by IP whitelist, WAF (Cloudflare/AWS WAF), or directory permissions.
+    possible_causes:
+      - User account or API token lacks required scopes or roles
+      - Web Application Firewall (WAF) rule triggered by request payload
+      - Server filesystem permissions disallow the web server from reading the target file
+      - IP address blocked by server allowlist (.htaccess, nginx allow/deny)
+    diagnostic_steps:
+      - command: "curl -i -X GET <url>"
+        description: "Inspect HTTP response body and custom error headers for policy details"
+    potential_solutions:
+      - description: "Request elevated role permissions or API scopes from the resource administrator"
+      - description: "Verify client IP address is present in the server's allowlist"
+    warnings:
+      - "Do not bypass WAF security protections using proxy rotations without authorization."
+
+  - id: http-404-not-found
+    error: 404 Not Found
+    category: HTTP
+    meaning: The server could not find any resource matching the requested Uniform Resource Identifier (URI).
+    exact_matches:
+      - "404 not found"
+      - "404"
+    patterns:
+      - '(?i)HTTP/(?:1\.[01]|2)\s+404(?:\s+Not Found)?'
+      - '(?i)status code 404'
+    error_codes:
+      - "404"
+    confirmed_templates:
+      - "HTTP Status Code: 404 Not Found"
+    likely_cause: The requested URL path is misspelled, the endpoint was moved or deleted, or routing configuration in the web server / API gateway is incorrect.
+    possible_causes:
+      - Typo in URL path, API version, or query parameters
+      - Resource was removed or endpoint deprecated
+      - Reverse proxy (Nginx, Traefik) routing rules or location blocks mismatch
+      - SPA fallback routing not configured (returning 404 for client-side routes)
+    diagnostic_steps:
+      - command: "curl -i <url>"
+        description: "Check the exact response headers and URL endpoint"
+    potential_solutions:
+      - description: "Double-check endpoint documentation and spelling"
+      - description: "Configure web server try_files fallback for single-page applications"
+    warnings:
+      - "Ensure sensitive administrative URLs are protected by 401/403 rather than relying on security by obscurity."
+
+  - id: http-429-too-many-requests
+    error: 429 Too Many Requests
+    category: HTTP
+    meaning: The client has sent too many requests in a given amount of time, exceeding the rate limit set by the server.
+    exact_matches:
+      - "429 too many requests"
+      - "rate limit exceeded"
+      - "429"
+    patterns:
+      - '(?i)HTTP/(?:1\.[01]|2)\s+429(?:\s+Too Many Requests)?'
+      - '(?i)status code 429'
+      - '(?i)rate limit exceeded'
+    error_codes:
+      - "429"
+    confirmed_templates:
+      - "HTTP Status Code: 429 Rate Limit Exceeded"
+    likely_cause: Client exceeded the allowed requests-per-minute/second quota defined by API rate limiting rules.
+    possible_causes:
+      - Rapid looping without delays in client script
+      - Shared IP address exceeding global rate limits
+      - Exhausted API tier quotas
+    diagnostic_steps:
+      - command: "curl -i <url> | grep -iE 'retry-after|x-ratelimit'"
+        description: "Inspect Retry-After and X-RateLimit headers to identify wait time"
+    potential_solutions:
+      - description: "Pause execution for the duration specified in the Retry-After header"
+      - description: "Implement exponential backoff with jitter in client request loops"
+    warnings:
+      - "Hammering rate-limited endpoints aggressively may lead to IP blacklisting by Cloudflare or AWS WAF."
+
+  - id: http-500-internal-server-error
+    error: 500 Internal Server Error
+    category: HTTP
+    meaning: The server encountered an unexpected condition or unhandled exception that prevented it from fulfilling the request.
+    exact_matches:
+      - "500 internal server error"
+      - "500"
+    patterns:
+      - '(?i)HTTP/(?:1\.[01]|2)\s+500(?:\s+Internal Server Error)?'
+      - '(?i)status code 500'
+    error_codes:
+      - "500"
+    confirmed_templates:
+      - "HTTP Status Code: 500 Internal Server Error"
+    likely_cause: An unhandled exception, fatal crash, database failure, or runtime error occurred inside the backend application code.
+    possible_causes:
+      - Uncaught exception or panic in application code
+      - Database connection lost or database query syntax error
+      - Missing environment variables or secret keys in backend deployment
+      - Null pointer dereference or missing required request body fields
+    diagnostic_steps:
+      - command: "curl -i <url>"
+        description: "Check if response body contains debug trace or error identifiers"
+    potential_solutions:
+      - description: "Inspect backend application log files and stack traces"
+    warnings:
+      - "Never display raw database error traces or stack traces to end users in production."
+
+  - id: http-502-bad-gateway
+    error: 502 Bad Gateway
+    category: HTTP
+    meaning: The reverse proxy or gateway server received an invalid or null response from the upstream application server.
+    exact_matches:
+      - "502 bad gateway"
+      - "502"
+    patterns:
+      - '(?i)HTTP/(?:1\.[01]|2)\s+502(?:\s+Bad Gateway)?'
+      - '(?i)status code 502'
+    error_codes:
+      - "502"
+    confirmed_templates:
+      - "HTTP Status Code: 502 Bad Gateway"
+    likely_cause: The backend upstream application process (e.g. Node, Python Gunicorn, Go, PHP-FPM) crashed or is not running.
+    possible_causes:
+      - Upstream application crashed or terminated unexpectedly
+      - Upstream listening port or Unix socket does not match reverse proxy config (e.g. proxy_pass)
+      - Upstream process killed by out-of-memory killer
+      - Upstream application hung during TLS handshake with proxy
+    diagnostic_steps:
+      - command: "sudo tail -n 30 /var/log/nginx/error.log"
+        description: "Inspect Nginx error log to find which upstream socket or port refused connection"
+      - command: "systemctl status <backend-service>"
+        description: "Check status of the backend application service"
+    potential_solutions:
+      - description: "Restart the upstream application service"
+      - description: "Verify upstream port in proxy configuration (nginx/caddy) matches application port"
+    warnings:
+      - "Check upstream application memory and CPU metrics to ensure it is not crashing under load."
+
+  - id: http-504-gateway-timeout
+    error: 504 Gateway Timeout
+    category: HTTP
+    meaning: The gateway or reverse proxy server did not receive a timely response from the upstream server within the configured timeout window.
+    exact_matches:
+      - "504 gateway timeout"
+      - "504"
+    patterns:
+      - '(?i)HTTP/(?:1\.[01]|2)\s+504(?:\s+Gateway Timeout)?'
+      - '(?i)status code 504'
+    error_codes:
+      - "504"
+    confirmed_templates:
+      - "HTTP Status Code: 504 Gateway Timeout"
+    likely_cause: The upstream application is processing a query or computation that takes longer than the proxy's timeout limit (e.g. proxy_read_timeout 60s).
+    possible_causes:
+      - Slow database queries, full table scans, or unindexed joins
+      - Upstream thread pool or worker starvation
+      - External API or third-party service dependency hanging
+      - Deadlock in database or application locks
+    diagnostic_steps:
+      - command: "sudo tail -n 30 /var/log/nginx/error.log"
+        description: "Inspect upstream timed out (110: Connection timed out) in proxy logs"
+    potential_solutions:
+      - description: "Optimize slow backend database queries or add indexes"
+      - description: "Increase proxy_read_timeout in Nginx if long-running requests are expected"
+      - description: "Offload long-running operations to asynchronous background workers"
+    warnings:
+      - "Blindly raising proxy timeouts to high values can tie up worker connections and cause cascading failure."

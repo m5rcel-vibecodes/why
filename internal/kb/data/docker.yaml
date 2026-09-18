@@ -1,0 +1,125 @@
+rules:
+  - id: docker-daemon-not-running
+    error: cannot connect to the Docker daemon
+    category: Docker
+    meaning: The Docker CLI client cannot establish communication with the Docker background daemon service over the Unix socket or TCP port.
+    exact_matches:
+      - "cannot connect to the docker daemon"
+      - "is the docker daemon running"
+    patterns:
+      - '(?i)Cannot connect to the Docker daemon at\s+(?P<socket>\S+)\.\s+Is the docker daemon running\?'
+      - '(?i)docker: error during connect:\s+Get\s+"?http://%2Fvar%2Frun%2Fdocker\.sock'
+    confirmed_templates:
+      - "Target socket: {{if .socket}}{{.socket}}{{else}}/var/run/docker.sock{{end}}"
+      - "Docker socket connection refused or file missing"
+    likely_cause: The Docker service (dockerd) is stopped, Docker Desktop is not running, or your current user lacks permission to access the Docker Unix socket.
+    possible_causes:
+      - Docker engine service is not active (systemctl status docker)
+      - Docker Desktop on macOS or Windows is quit or initializing
+      - Current non-root user is not added to the 'docker' system group
+      - Incorrect DOCKER_HOST environment variable configured
+    diagnostic_steps:
+      - command: "systemctl status docker"
+        description: "Check Docker systemd service status on Linux"
+      - command: "ls -l /var/run/docker.sock"
+        description: "Inspect permissions on the Docker socket file"
+      - command: "groups"
+        description: "Verify if your current user is a member of the docker group"
+    potential_solutions:
+      - description: "Start the Docker service on Linux"
+        command: "sudo systemctl start docker"
+      - description: "Add your current user to the docker group (requires re-login to take effect)"
+        command: "sudo usermod -aG docker $USER"
+      - description: "On macOS/Windows, launch the Docker Desktop application"
+    warnings:
+      - "Members of the 'docker' group possess root-equivalent permissions on the host system."
+
+  - id: docker-port-already-allocated
+    error: docker port is already allocated
+    category: Docker
+    meaning: Docker cannot bind the container port to the host port because another service or container is already listening on that host port.
+    exact_matches:
+      - "port is already allocated"
+      - "bind: address already in use"
+    patterns:
+      - '(?i)Bind for (?P<ip>[0-9\.]+):(?P<port>\d+) failed:\s+port is already allocated'
+      - '(?i)driver failed programming external connectivity on endpoint .*:\s+Bind for [0-9\.]*:(?P<port>\d+)'
+    confirmed_templates:
+      - "Host port: {{if .port}}{{.port}}{{else}}<port>{{end}}"
+      - "Port conflict on local IP: {{if .ip}}{{.ip}}{{else}}0.0.0.0{{end}}"
+    likely_cause: Another running Docker container or a native host service (e.g. nginx, postgres, node) is already listening on this host port.
+    possible_causes:
+      - Another container running with the same host port mapping (-p 80:80)
+      - An existing local system service (e.g., local PostgreSQL on 5432 or Apache on 80)
+      - Zombie process still holding the socket binding
+    diagnostic_steps:
+      - command: "docker ps --filter publish={{if .port}}{{.port}}{{else}}<port>{{end}}"
+        description: "Identify any running container publishing this host port"
+      - command: "sudo ss -tulpn | grep :{{if .port}}{{.port}}{{else}}<port>{{end}}"
+        description: "Identify native Linux host process listening on this port"
+      - command: "sudo lsof -i :{{if .port}}{{.port}}{{else}}<port>{{end}}"
+        description: "List host process holding the port on macOS or Linux"
+    potential_solutions:
+      - description: "Stop the conflicting Docker container"
+        command: "docker stop <container_id>"
+      - description: "Map to a different host port (e.g. -p 8080:80 instead of -p 80:80)"
+    warnings:
+      - "Do not forcefully terminate unfamiliar system processes without verifying what service they run."
+
+  - id: docker-oom-killed
+    error: docker container exited with code 137
+    category: Docker
+    meaning: The container was terminated by the host operating system Out-Of-Memory (OOM) killer because it exceeded its memory limit.
+    exact_matches:
+      - "exited with code 137"
+      - "container oom killed"
+    patterns:
+      - '(?i)container .* exited with code 137'
+      - '(?i)"OOMKilled":\s+true'
+    error_codes:
+      - "137"
+    confirmed_templates:
+      - "Container received SIGKILL (128 + 9 = 137) from kernel OOM killer"
+    likely_cause: The container consumed more memory than allocated by Docker limits (--memory) or host memory was completely exhausted.
+    possible_causes:
+      - Configured Docker memory limit is too small for application workload
+      - Memory leak in container application
+      - Java JVM heap not aware of container limits (-XX:+UseContainerSupport)
+    diagnostic_steps:
+      - command: "docker inspect <container_id> --format='{{.State.OOMKilled}}'"
+        description: "Confirm whether container was terminated specifically by OOM"
+      - command: "docker stats --no-stream"
+        description: "Observe current memory consumption across all active containers"
+    potential_solutions:
+      - description: "Increase memory limit in docker run or docker-compose.yml"
+        command: "docker run -m 2g ..."
+    warnings:
+      - "Unbounded container memory can starve host services and crash the operating system."
+
+  - id: docker-pull-denied
+    error: docker image pull access denied
+    category: Docker
+    meaning: Docker registry refused the image pull request due to missing authentication, invalid image name, or private repository permissions.
+    exact_matches:
+      - "pull access denied"
+      - "manifest unknown"
+    patterns:
+      - "(?i)pull access denied for (?P<image>\\S+),\\s+repository does not exist or may require 'docker login'"
+      - '(?i)manifest for (?P<image>\S+) not found:\s+manifest unknown'
+    confirmed_templates:
+      - "Target image: {{if .image}}{{.image}}{{else}}<image>{{end}}"
+      - "Docker registry returned 401/404 for requested image/tag"
+    likely_cause: You are not logged in to the registry, the image tag does not exist, or the repository name has a typo.
+    possible_causes:
+      - Image name or tag typo (e.g. latest does not exist for this image)
+      - The repository is private and requires 'docker login'
+      - Docker Hub anonymous pull rate limit exceeded
+    diagnostic_steps:
+      - command: "docker info | grep -i registry"
+        description: "Check configured Docker registries and credentials"
+    potential_solutions:
+      - description: "Log in to Docker registry with credentials"
+        command: "docker login"
+      - description: "Verify image name and tag spelling on registry website"
+    warnings:
+      - "Do not store plaintext registry tokens in unencrypted scripts or Dockerfiles."

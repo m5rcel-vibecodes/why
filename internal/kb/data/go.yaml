@@ -1,0 +1,110 @@
+rules:
+  - id: go-nil-pointer
+    error: go runtime nil pointer dereference
+    category: Go
+    meaning: The Go runtime attempted to access or dereference a pointer, interface, or struct field that holds a nil value.
+    exact_matches:
+      - "nil pointer dereference"
+      - "invalid memory address or nil pointer dereference"
+    patterns:
+      - '(?i)panic:\s+runtime error:\s+invalid memory address or nil pointer dereference'
+      - '(?i)SIGSEGV:\s+segmentation violation'
+    confirmed_templates:
+      - "Go runtime panic: nil pointer dereference"
+    likely_cause: Accessing a method or field on an uninitialized pointer, or reading a nil map/interface without checking for nil.
+    possible_causes:
+      - Unchecked error returned from function; accessing result despite non-nil err
+      - Uninitialized pointer variable or struct field
+      - Calling methods on a typed nil interface
+      - Writing to an uninitialized map (var m map[string]int instead of make(...))
+    diagnostic_steps:
+      - command: "go test -v -race ./..."
+        description: "Run test suite with the Go race detector enabled to find concurrency races"
+    potential_solutions:
+      - description: "Always check 'if err != nil' before accessing function return values"
+      - description: "Initialize maps with make() before writing"
+    warnings:
+      - "Do not use 'recover()' to blindly silence panics without resolving the underlying nil state."
+
+  - id: go-deadlock
+    error: go deadlock (all goroutines are asleep)
+    category: Go
+    meaning: The Go runtime scheduler detected that every active goroutine is blocked waiting on channels, mutexes, or sync primitives.
+    exact_matches:
+      - "all goroutines are asleep - deadlock"
+      - "fatal error: all goroutines are asleep"
+    patterns:
+      - '(?i)fatal error:\s+all goroutines are asleep\s+-\s+deadlock!'
+    confirmed_templates:
+      - "Go runtime deadlock detector triggered: 0 runnable goroutines"
+    likely_cause: Goroutines are waiting to send/receive on unbuffered channels without an active peer, or unreleased sync.Mutex.
+    possible_causes:
+      - Sending to an unbuffered channel when no goroutine is actively receiving
+      - Receiving from a channel when no goroutine will ever send or close it
+      - Mutex lock called twice in the same goroutine (re-entrancy deadlock)
+      - sync.WaitGroup Add/Done counter mismatch (e.g. wg.Wait() waiting forever)
+    diagnostic_steps:
+      - command: "go test -v -race ./..."
+        description: "Analyze goroutine stack traces printed in the panic output"
+    potential_solutions:
+      - description: "Ensure channel sends are paired with receives in concurrent goroutines"
+      - description: "Ensure mutex Unlock() is called using defer immediately after Lock()"
+    warnings:
+      - "Deadlock panics cannot be recovered with recover(); the Go runtime halts the process immediately."
+
+  - id: go-mod-tidy
+    error: go updates to go.mod needed
+    category: Go
+    meaning: The Go compiler detected imported packages in code that are missing from go.mod or checksums missing from go.sum.
+    exact_matches:
+      - "updates to go.mod needed"
+      - "go mod tidy"
+    patterns:
+      - '(?i)updates to go\.mod needed;\s+to update it:\s+go mod tidy'
+      - '(?i)missing go\.sum entry for module'
+    confirmed_templates:
+      - "go.mod or go.sum out of sync with imported Go packages"
+    likely_cause: A new package was imported in Go source files, or dependencies were removed without running 'go mod tidy'.
+    possible_causes:
+      - Added new import without downloading dependencies
+      - Switched branches with different dependencies
+      - Cloned repo where go.sum is incomplete
+    diagnostic_steps:
+      - command: "go mod verify"
+        description: "Verify dependencies have expected cryptographic hashes in go.sum"
+    potential_solutions:
+      - description: "Synchronize go.mod and go.sum with source code imports"
+        command: "go mod tidy"
+      - description: "Download required module dependencies"
+        command: "go mod download"
+    warnings:
+      - "Review dependency version changes in git diff go.mod before committing."
+
+  - id: go-imported-not-used
+    error: go imported and not used
+    category: Go
+    meaning: The Go compiler strictly forbids unused package imports in source code files.
+    exact_matches:
+      - "imported and not used"
+      - "imported and not used:"
+    patterns:
+      - '(?i)(?P<file>[^:\s]+):(?P<line>\d+):(?P<col>\d+):\s+imported and not used:\s+"(?P<pkg>[^"]+)"'
+      - '(?i)imported and not used:\s+"(?P<pkg>[^"]+)"'
+    confirmed_templates:
+      - "Unused package: {{if .pkg}}{{.pkg}}{{else}}<package>{{end}}"
+      - "Compiler error at: {{if .file}}{{.file}}{{if .line}}:{{.line}}{{end}}{{end}}"
+    likely_cause: A package import remained in the file after removing all references to its symbols.
+    possible_causes:
+      - Code refactoring left behind an unused import
+      - Intended side-effect import missing underscore prefix (_ "package")
+    diagnostic_steps:
+      - command: "go vet ./..."
+        description: "Examine static analysis warnings for the project"
+    potential_solutions:
+      - description: "Remove the unused import from the file"
+      - description: "If importing for initialization side-effects only, prefix with blank identifier"
+        command: '_ "{{if .pkg}}{{.pkg}}{{else}}<package>{{end}}"'
+      - description: "Automatically clean imports using goimports"
+        command: "goimports -w {{if .file}}{{.file}}{{else}}<file.go>{{end}}"
+    warnings:
+      - "Blank imports (_ \"package\") execute package init() functions which may register drivers or start background routines."

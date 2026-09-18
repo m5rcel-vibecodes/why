@@ -1,0 +1,91 @@
+rules:
+  - id: tls-cert-expired
+    error: certificate has expired
+    category: TLS
+    meaning: The SSL/TLS certificate presented by the remote server has passed its validity expiration timestamp (Not After date).
+    exact_matches:
+      - "certificate has expired"
+      - "cert expired"
+    patterns:
+      - '(?i)(?:x509:\s+)?certificate has expired or is not yet valid'
+      - '(?i)SSL certificate problem:\s+certificate has expired'
+      - '(?i)SEC_ERROR_EXPIRED_CERTIFICATE'
+    confirmed_templates:
+      - "TLS Handshake rejected due to expired X.509 certificate"
+    likely_cause: The SSL certificate was not renewed before its expiration date (common with Let's Encrypt 90-day certificates), or client system clock is incorrect.
+    possible_causes:
+      - Automatic certificate renewal (certbot cron/systemd timer) failed
+      - Web server daemon (nginx/apache) was not reloaded after certificate renewal
+      - Client computer local clock is set incorrectly (skewed into future or past)
+    diagnostic_steps:
+      - command: "openssl s_client -connect <host>:443 -servername <host> 2>/dev/null | openssl x509 -noout -dates"
+        description: "Inspect the exact valid NotBefore and NotAfter certificate dates"
+      - command: "date"
+        description: "Check your local system date and time for clock skew"
+    potential_solutions:
+      - description: "Renew certificate using certbot or your certificate manager"
+        command: "sudo certbot renew"
+      - description: "Reload web server to load the newly issued certificate"
+        command: "sudo systemctl reload nginx"
+      - description: "Synchronize client system clock with NTP if time is skewed"
+        command: "sudo timedatectl set-ntp on"
+    warnings:
+      - "Never disable SSL verification permanently (e.g. -k or --insecure) in production environments."
+
+  - id: tls-unknown-authority
+    error: certificate signed by unknown authority
+    category: TLS
+    meaning: The client could not verify the certificate chain because the issuer (Certificate Authority) is not trusted by the client's trust store.
+    exact_matches:
+      - "certificate signed by unknown authority"
+      - "self signed certificate"
+    patterns:
+      - '(?i)x509:\s+certificate signed by unknown authority'
+      - '(?i)SSL certificate problem:\s+self-signed certificate'
+      - '(?i)unable to get local issuer certificate'
+      - '(?i)SEC_ERROR_UNKNOWN_ISSUER'
+    confirmed_templates:
+      - "X.509 certificate chain validation failed: untrusted root CA or self-signed cert"
+    likely_cause: The server uses a self-signed certificate, an internal company private CA not installed on the machine, or missing intermediate certificates.
+    possible_causes:
+      - Self-signed certificate used for local development
+      - Corporate TLS interception proxy (e.g. Zscaler) whose CA is not trusted by your terminal/runtime
+      - Server certificate bundle is missing intermediate CA certificates (incomplete chain)
+      - Outdated ca-certificates package on local machine
+    diagnostic_steps:
+      - command: "openssl s_client -connect <host>:443 -showcerts"
+        description: "Examine the complete certificate chain returned by the server"
+    potential_solutions:
+      - description: "Update local operating system root certificate authorities"
+        command: "sudo update-ca-certificates"
+      - description: "Add private corporate root CA to your trust store"
+      - description: "Ensure the web server configuration includes fullchain.pem rather than cert.pem"
+    warnings:
+      - "Disabling verification (-k or NODE_TLS_REJECT_UNAUTHORIZED=0) exposes your connection to Man-In-The-Middle attacks."
+
+  - id: tls-hostname-mismatch
+    error: tls certificate hostname mismatch
+    category: TLS
+    meaning: The Common Name (CN) or Subject Alternative Names (SAN) in the server certificate do not match the requested hostname.
+    exact_matches:
+      - "certificate hostname mismatch"
+      - "hostname mismatch"
+    patterns:
+      - '(?i)x509:\s+certificate is valid for .*, not (?P<domain>\S+)'
+      - '(?i)SSL: certificate subject name .* does not match target host name'
+    confirmed_templates:
+      - "Requested domain: {{if .domain}}{{.domain}}{{else}}<domain>{{end}}"
+      - "X.509 Subject Alternative Name (SAN) validation failed"
+    likely_cause: Connecting via IP address or alternate domain name, or SNI (Server Name Indication) is serving the default/wrong vhost certificate.
+    possible_causes:
+      - Requesting resource by IP address when cert only covers domain name
+      - Missing wildcard entry or subdomain in certificate Subject Alternative Name
+      - Reverse proxy SNI routing serving the fallback default certificate
+    diagnostic_steps:
+      - command: "openssl s_client -connect <host>:443 -servername <host> 2>/dev/null | openssl x509 -noout -text | grep -A1 'Subject Alternative Name'"
+        description: "List all domains covered by Subject Alternative Names (SAN)"
+    potential_solutions:
+      - description: "Issue a new certificate including all required subdomains and domains"
+      - description: "Ensure client passes SNI when connecting"
+    warnings:
+      - "Hostnames must match exactly; wildcards like *.domain.com only cover a single subdomain level."

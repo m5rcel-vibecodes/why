@@ -1,0 +1,136 @@
+rules:
+  - id: net-connection-refused
+    error: connection refused
+    category: Networking
+    meaning: The target host reached by the packet actively rejected the TCP connection attempt with a TCP RST (reset) packet.
+    exact_matches:
+      - "connection refused"
+      - "econnrefused"
+    patterns:
+      - '(?i)(?:failed to connect to\s+|connect(?:ing to|\s+to)?:\s*|curl:\s+\(\d+\)\s+Failed to connect to\s+|connect to\s+)?(?P<host>[^\s:]+)(?::(?P<port>\d+))?:\s*(?:connect:\s*)?Connection refused'
+      - '(?i)dial tcp (?P<host>[^\s:]+):(?P<port>\d+):\s+connect:\s+connection refused'
+      - '(?i)errno 111.*connection refused'
+    error_codes:
+      - "111"
+      - "61"
+      - "ECONNREFUSED"
+    confirmed_templates:
+      - "Target endpoint: {{if .host}}{{.host}}{{else}}<host>{{end}}{{if .port}}:{{.port}}{{end}}"
+      - "Operating system received TCP RST packet rejecting connection (ECONNREFUSED)"
+    likely_cause: No service is actively listening on the destination port, or a local host firewall (iptables/nftables) actively rejected the packet.
+    possible_causes:
+      - The target service or daemon is not running
+      - The service is bound to localhost (127.0.0.1) instead of 0.0.0.0, blocking external connections
+      - Wrong port number specified in client configuration
+      - Local firewall rule configured to REJECT packets rather than DROP
+    diagnostic_steps:
+      - command: "nc -zv {{if .host}}{{.host}}{{else}}<host>{{end}} {{if .port}}{{.port}}{{else}}<port>{{end}}"
+        description: "Test basic TCP port connectivity"
+      - command: "sudo ss -tulpn | grep :{{if .port}}{{.port}}{{else}}<port>{{end}}"
+        description: "Verify if service is listening locally and on which IP interfaces (0.0.0.0 vs 127.0.0.1)"
+      - command: "ping -c 3 {{if .host}}{{.host}}{{else}}<host>{{end}}"
+        description: "Verify ICMP network reachability to the host"
+    potential_solutions:
+      - description: "Start the target service daemon if it is stopped"
+      - description: "Update service configuration to bind to 0.0.0.0 or the appropriate network interface"
+    warnings:
+      - "Binding a service to 0.0.0.0 exposes it to all available network interfaces including the public internet."
+
+  - id: net-connection-timed-out
+    error: connection timed out
+    category: Networking
+    meaning: The client sent TCP SYN packets to initiate a connection, but received no response or acknowledgment before the timeout deadline.
+    exact_matches:
+      - "connection timed out"
+      - "etimedout"
+    patterns:
+      - '(?i)(?:connect:\s+|curl:\s+\(\d+\)\s+.*)connection timed out'
+      - '(?i)dial tcp (?P<host>[^\s:]+):(?P<port>\d+):\s+i/o timeout'
+      - '(?i)Operation timed out after \d+ milliseconds'
+    error_codes:
+      - "110"
+      - "ETIMEDOUT"
+    confirmed_templates:
+      - "Host: {{if .host}}{{.host}}{{else}}<host>{{end}}{{if .port}}:{{.port}}{{end}}"
+      - "TCP handshake expired without receiving SYN-ACK or RST packets (ETIMEDOUT)"
+    likely_cause: A network firewall (e.g. AWS Security Group, cloud VPC firewall, iptables) is silently dropping packets, or routing is broken.
+    possible_causes:
+      - Cloud security groups or network ACLs do not allow ingress traffic on this port
+      - Target host is offline, sleeping, or powered off
+      - Asymmetric routing or routing loop dropping return packets
+      - VPN connection dropped or not connected
+    diagnostic_steps:
+      - command: "traceroute -T -p {{if .port}}{{.port}}{{else}}443{{end}} {{if .host}}{{.host}}{{else}}<host>{{end}}"
+        description: "Trace network path using TCP packets to locate where packets are dropped"
+      - command: "ping -c 3 {{if .host}}{{.host}}{{else}}<host>{{end}}"
+        description: "Check if intermediate routers drop ICMP or if the entire host is unresponsive"
+    potential_solutions:
+      - description: "Verify ingress firewall rules on cloud provider (AWS/GCP/Azure) allow the client IP"
+      - description: "Verify VPN connection is active if accessing private resources"
+    warnings:
+      - "Do not disable host firewalls completely (e.g. ufw disable) to test connectivity."
+
+  - id: net-address-already-in-use
+    error: address already in use
+    category: Networking
+    meaning: The application attempted to bind a network socket to an IP address and port that is already in use by another process.
+    exact_matches:
+      - "address already in use"
+      - "eaddrinuse"
+    patterns:
+      - '(?i)(?:bind:\s+|listen tcp :)(?P<port>\d+):\s+address already in use'
+      - '(?i)listen EADDRINUSE: address already in use [0-9\.]*:(?P<port>\d+)'
+    error_codes:
+      - "98"
+      - "48"
+      - "EADDRINUSE"
+    confirmed_templates:
+      - "Conflicted port: {{if .port}}{{.port}}{{else}}<port>{{end}}"
+      - "Socket bind syscall returned EADDRINUSE"
+    likely_cause: Another instance of the application is already running, or a socket remains in TIME_WAIT state without SO_REUSEADDR.
+    possible_causes:
+      - Previous instance of your application is still running in the background
+      - A different service is occupying the port (e.g. system Apache on port 80)
+      - Socket in TIME_WAIT state after sudden process crash
+    diagnostic_steps:
+      - command: "sudo lsof -i :{{if .port}}{{.port}}{{else}}<port>{{end}}"
+        description: "Identify the process PID holding the requested port"
+      - command: "sudo ss -tulpn | grep :{{if .port}}{{.port}}{{else}}<port>{{end}}"
+        description: "Show listening sockets matching the port"
+    potential_solutions:
+      - description: "Terminate the process holding the port using its PID"
+        command: "kill -15 <PID>"
+      - description: "Configure application to use a different port"
+    warnings:
+      - "Avoid 'kill -9' on database servers or stateful applications to prevent data corruption."
+
+  - id: net-connection-reset
+    error: connection reset by peer
+    category: Networking
+    meaning: An established TCP connection was abruptly closed or interrupted by the remote server sending an unexpected RST packet.
+    exact_matches:
+      - "connection reset by peer"
+      - "econnreset"
+    patterns:
+      - '(?i)connection reset by peer'
+      - '(?i)read tcp .*: read: connection reset by peer'
+    error_codes:
+      - "104"
+      - "54"
+      - "ECONNRESET"
+    confirmed_templates:
+      - "Active TCP socket forcefully reset by remote end (ECONNRESET)"
+    likely_cause: The remote server process crashed, an intermediate NAT/load-balancer timed out an idle connection, or a TLS/proxy inspection device severed the link.
+    possible_causes:
+      - Remote application server crashed during request processing
+      - Intermediate load balancer or stateful firewall dropped connection due to idle timeout
+      - Client sent data that violated server protocol rules, triggering immediate socket termination
+      - MTU size mismatch causing packet fragmentation drops
+    diagnostic_steps:
+      - command: "curl -iv <url>"
+        description: "Inspect HTTP headers and connection establishment details"
+    potential_solutions:
+      - description: "Implement TCP keepalive or retry logic with exponential backoff"
+      - description: "Inspect server-side application error logs for crash messages"
+    warnings:
+      - "Retrying non-idempotent HTTP requests (e.g. POST payments) automatically can cause duplicate actions."

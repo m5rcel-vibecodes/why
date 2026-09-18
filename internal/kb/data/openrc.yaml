@@ -1,0 +1,61 @@
+rules:
+  - id: openrc-service-not-found
+    error: openrc service does not exist
+    category: OpenRC
+    meaning: OpenRC init system cannot find an init script in /etc/init.d/ matching the specified service name.
+    exact_matches:
+      - "service does not exist"
+      - "openrc service not found"
+    patterns:
+      - '(?i)\* ERROR:\s+(?P<service>\S+)\s+does not exist'
+      - "(?i)rc-service:\\s+service `(?P<service>[^']+)' does not exist"
+    confirmed_templates:
+      - "Target service: {{if .service}}{{.service}}{{else}}<service>{{end}}"
+      - "OpenRC init script not present in /etc/init.d/"
+    likely_cause: The service init script is missing from /etc/init.d or the service package is not installed (e.g. Alpine Linux / Gentoo).
+    possible_causes:
+      - Service package is not installed (e.g., apk add or emerge)
+      - Typo in the service name
+      - The script in /etc/init.d/ lacks executable (+x) permissions
+    diagnostic_steps:
+      - command: "rc-status -a"
+        description: "List all OpenRC services and their runlevels"
+      - command: "ls -l /etc/init.d/{{if .service}}{{.service}}{{else}}*{{end}}"
+        description: "Check if the service init script exists and is executable"
+    potential_solutions:
+      - description: "Install the service package via package manager (e.g. apk add <package>)"
+      - description: "Add service to default runlevel after installing"
+        command: "rc-update add {{if .service}}{{.service}}{{else}}<service>{{end}} default"
+    warnings:
+      - "Do not execute unverified third-party init scripts in /etc/init.d/ as root."
+
+  - id: openrc-service-crashed
+    error: openrc service has crashed
+    category: OpenRC
+    meaning: The process monitored by OpenRC terminated unexpectedly without updating its PID or lock file state.
+    exact_matches:
+      - "service has crashed"
+      - "status: crashed"
+    patterns:
+      - '(?i)\* status:\s+crashed'
+      - '(?i)\* ERROR:\s+(?P<service>\S+)\s+has crashed'
+    confirmed_templates:
+      - "Service: {{if .service}}{{.service}}{{else}}<service>{{end}}"
+      - "Monitored PID file exists but target process is no longer running"
+    likely_cause: The daemon died from a fatal signal (SIGSEGV, unhandled exception, or OOM) while stale PID files remained.
+    possible_causes:
+      - Daemon crashed due to misconfiguration or missing dependent services
+      - Stale PID file left in /run or /var/run after sudden crash or reboot
+      - Permission error writing log files or binding ports
+    diagnostic_steps:
+      - command: "rc-service {{if .service}}{{.service}}{{else}}<service>{{end}} status"
+        description: "Inspect OpenRC status output for the service"
+      - command: "tail -n 50 /var/log/messages"
+        description: "Examine system syslog messages for crash logs"
+    potential_solutions:
+      - description: "Zap stale service state to allow OpenRC to attempt a clean restart"
+        command: "rc-service {{if .service}}{{.service}}{{else}}<service>{{end}} zap"
+      - description: "Restart service after fixing underlying daemon configuration"
+        command: "rc-service {{if .service}}{{.service}}{{else}}<service>{{end}} restart"
+    warnings:
+      - "'rc-service zap' clears lock files without fixing the underlying application bug that caused the crash."

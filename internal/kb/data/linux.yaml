@@ -1,0 +1,297 @@
+rules:
+  - id: linux-permission-denied
+    error: permission denied
+    category: Linux
+    meaning: The process does not have sufficient permission to access the requested resource.
+    exact_matches:
+      - "permission denied"
+      - "eacces"
+      - "access denied"
+    patterns:
+      - '(?i)permission denied(:?\s+(?P<path>\S+))?'
+      - '(?i)failed to open .*: Permission denied'
+      - '(?i)bash:\s+(?P<path>\S+):\s+Permission denied'
+    error_codes:
+      - "13"
+      - "EACCES"
+      - "126"
+    confirmed_templates:
+      - "Target resource: {{if .path}}{{.path}}{{else}}<file or directory>{{end}}"
+      - "Operating system access check failed (EACCES / code 13)"
+    likely_cause: The current user or process lacks read, write, or execute mode bits or ownership for the target path.
+    possible_causes:
+      - Incorrect ownership (file or directory owned by root or another user)
+      - Incorrect file permissions (mode bits lack r/w/x for user or group)
+      - Filesystem restrictions (mounted read-only, noexec, or nosuid)
+      - Parent directory lacks execute (+x) permission for directory traversal
+      - Security policies (SELinux denying context, AppArmor profile restrictions)
+    diagnostic_steps:
+      - command: "ls -ld {{if .path}}{{.path}}{{else}}<file>{{end}}"
+        description: "Inspect file ownership and permission bits"
+      - command: "id"
+        description: "Check your current user UID and assigned groups"
+      - command: "namei -l {{if .path}}{{.path}}{{else}}<file>{{end}}"
+        description: "Trace permissions on every parent directory leading to the target"
+      - command: "getfacl {{if .path}}{{.path}}{{else}}<file>{{end}}"
+        description: "Check for extended access control lists (POSIX ACLs)"
+    potential_solutions:
+      - description: "Grant execution or read/write permissions to the current user or group"
+        command: "chmod u+rx {{if .path}}{{.path}}{{else}}<file>{{end}}"
+      - description: "Change ownership if you own or manage the file"
+        command: "chown $USER:$USER {{if .path}}{{.path}}{{else}}<file>{{end}}"
+    warnings:
+      - "Do not blindly use sudo before determining the actual cause."
+      - "Never run chmod 777 or recursive chown -R on system directories."
+
+  - id: linux-command-not-found
+    error: command not found
+    category: Linux
+    meaning: The shell could not find an executable matching the requested command name in your system PATH or shell builtins.
+    exact_matches:
+      - "command not found"
+      - "not found"
+    patterns:
+      - '(?i)(?:bash|zsh|sh):\s+(?:command\s+not\s+found:\s+|)(?P<command>[a-zA-Z0-9_\-\.]+)(?::\s+command\s+not\s+found)?'
+      - '(?i)exec:\s+"(?P<command>[^"]+)":\s+executable\s+file\s+not\s+found\s+in\s+\$PATH'
+    error_codes:
+      - "127"
+    confirmed_templates:
+      - "Missing command: {{if .command}}{{.command}}{{else}}<command>{{end}}"
+      - "Shell lookup in $PATH returned exit status 127"
+    likely_cause: The binary is either not installed on the system, or its installation directory is not included in the $PATH environment variable.
+    possible_causes:
+      - The package providing this tool is not installed
+      - Typo in the command name
+      - The executable is located in /usr/local/bin, ~/.local/bin, or /opt/bin which is missing from $PATH
+      - "The script has a broken or missing shebang interpreter (e.g. #!/usr/bin/env python3)"
+      - For 32-bit binaries or foreign architectures, dynamic loader / libraries are missing
+    diagnostic_steps:
+      - command: "which {{if .command}}{{.command}}{{else}}<command>{{end}}"
+        description: "Check if the binary exists anywhere in current $PATH"
+      - command: "echo $PATH"
+        description: "Inspect directories searched by your current shell"
+      - command: "type -a {{if .command}}{{.command}}{{else}}<command>{{end}}"
+        description: "Display all locations and aliases matching the name"
+    potential_solutions:
+      - description: "Install the required package via your distribution's package manager"
+      - description: "Add the binary's installation directory to PATH in ~/.bashrc or ~/.zshrc"
+        command: 'export PATH="$PATH:/path/to/bin"'
+      - description: "If executing a script in the current directory, prefix with ./"
+        command: "./{{if .command}}{{.command}}{{else}}<script>{{end}}"
+    warnings:
+      - "Verify third-party script sources before installing or adding unknown paths to $PATH."
+
+  - id: linux-no-space-left
+    error: no space left on device
+    category: Linux
+    meaning: The filesystem has reached maximum capacity or exhausted available inodes, preventing any new writes.
+    exact_matches:
+      - "no space left on device"
+      - "enospc"
+      - "disk full"
+    patterns:
+      - '(?i)no space left on device'
+      - '(?i)write error: no space left'
+    error_codes:
+      - "28"
+      - "ENOSPC"
+    confirmed_templates:
+      - "Disk or inode allocation failed (ENOSPC / code 28)"
+    likely_cause: The target partition is 100% full, or all available inode numbers on the filesystem have been exhausted by millions of small files.
+    possible_causes:
+      - Disk space exhausted by large log files, core dumps, or package caches
+      - Inode exhaustion (df -i shows 100% even if disk space appears available)
+      - Deleted open files still holding unlinked disk space until the process exits
+      - Reserved blocks for root user (typically 5% on ext4) preventing non-root writes
+      - Quota exceeded for the current user
+    diagnostic_steps:
+      - command: "df -h"
+        description: "Check storage usage on all mounted filesystems"
+      - command: "df -i"
+        description: "Check inode usage (exhausted inodes cause ENOSPC even with free gigabytes)"
+      - command: "lsof +L1"
+        description: "Find deleted files held open by running processes holding space"
+      - command: "du -sh /var/log/* 2>/dev/null | sort -h"
+        description: "Check log directories for runaway log files"
+    potential_solutions:
+      - description: "Clean package manager cache (e.g. apt clean, dnf clean all)"
+      - description: "Rotate or truncate oversized logs"
+      - description: "Restart processes holding deleted files to release disk blocks"
+    warnings:
+      - "Do not run rm -rf / or blindly delete files in /usr, /lib, or /boot."
+
+  - id: linux-read-only-fs
+    error: read-only file system
+    category: Linux
+    meaning: The storage filesystem was mounted in read-only mode, preventing file modifications, additions, or deletions.
+    exact_matches:
+      - "read-only file system"
+      - "erofs"
+    patterns:
+      - '(?i)read-only file system'
+      - '(?i)cannot create .*: Read-only file system'
+    error_codes:
+      - "30"
+      - "EROFS"
+    confirmed_templates:
+      - "Filesystem write operation rejected due to read-only mount (EROFS / code 30)"
+    likely_cause: The kernel detected filesystem corruption or I/O hardware errors and remounted the filesystem read-only to prevent further corruption.
+    possible_causes:
+      - Filesystem corruption triggered automatic emergency read-only remount
+      - Drive I/O errors or failing storage device
+      - Explicitly mounted with 'ro' option in /etc/fstab
+      - Snapshot or immutable container rootfs
+    diagnostic_steps:
+      - command: "mount | grep 'ro[,\\]]'"
+        description: "List filesystems currently mounted read-only"
+      - command: "dmesg -T | grep -iE 'error|remount|read-only|ext4|xfs|btrfs'"
+        description: "Inspect kernel ring buffer for filesystem or hardware I/O errors"
+      - command: "smartctl -H /dev/sdX"
+        description: "Inspect disk hardware health if smartmontools is installed"
+    potential_solutions:
+      - description: "Safely remount read-write if caused by an intentional config"
+        command: "mount -o remount,rw /mountpoint"
+      - description: "Reboot into rescue mode and perform a filesystem check (fsck)"
+    warnings:
+      - "Never run fsck on an actively mounted, active read-write filesystem."
+      - "Back up critical data immediately if dmesg indicates storage hardware errors."
+
+  - id: linux-device-busy
+    error: device or resource busy
+    category: Linux
+    meaning: The requested device, file, or mount point cannot be unmounted, modified, or removed because an active process is still using it.
+    exact_matches:
+      - "device or resource busy"
+      - "ebusy"
+    patterns:
+      - '(?i)device or resource busy'
+      - '(?i)target is busy'
+      - '(?i)umount: .*: target is busy'
+    error_codes:
+      - "16"
+      - "EBUSY"
+    confirmed_templates:
+      - "Device or resource in active use (EBUSY / code 16)"
+    likely_cause: A process or shell session has an open file handle, working directory, or lock on the specified resource.
+    possible_causes:
+      - A running process or open shell has its current working directory (cwd) inside the mount point
+      - Open file handles (logs, active sockets, background services)
+      - Active swap file or loopback device mounted on the target
+      - NFS or SMB export active
+    diagnostic_steps:
+      - command: "fuser -vm <mountpoint-or-file>"
+        description: "Identify all process IDs using the device or file"
+      - command: "lsof +D <mountpoint>"
+        description: "List all open files and associated processes under the mount directory"
+    potential_solutions:
+      - description: "Terminate or gracefully shut down the blocking process identified by fuser or lsof"
+      - description: "If unmounting a hung network mount, use lazy unmount as a fallback"
+        command: "umount -l <mountpoint>"
+    warnings:
+      - "Lazy unmounting (umount -l) does not close open file descriptors; data loss may occur if writes are buffered."
+
+  - id: linux-broken-pipe
+    error: broken pipe
+    category: Linux
+    meaning: A process attempted to write to a pipe or socket whose reading end was already closed or terminated.
+    exact_matches:
+      - "broken pipe"
+      - "epipe"
+    patterns:
+      - '(?i)broken pipe'
+      - '(?i)write: broken pipe'
+      - '(?i)fatal: the remote end hung up unexpectedly'
+    error_codes:
+      - "32"
+      - "EPIPE"
+    confirmed_templates:
+      - "Output stream terminated while writer was active (EPIPE / SIGPIPE / code 32)"
+    likely_cause: The downstream command in a shell pipeline exited early (e.g. head, grep -q) before consuming all upstream output.
+    possible_causes:
+      - Downstream pipeline consumer exited early (normal behavior with commands like head)
+      - Network socket prematurely closed by remote server or client
+      - Memory limit exceeded in the downstream consumer causing unexpected exit
+      - SSH connection dropped due to timeout or keepalive failure
+    diagnostic_steps:
+      - command: "dmesg -T | tail -n 20"
+        description: "Check if the receiving process was killed by kernel OOM or segfault"
+      - command: "journalctl -xe -n 30"
+        description: "Check system logs for service termination"
+    potential_solutions:
+      - description: "If pipelining into head, this is normal and can be safely ignored or silenced"
+      - description: "Ensure server keepalive settings are configured for long SSH or network transfers"
+    warnings:
+      - "Do not suppress broken pipe errors in scripts without ensuring downstream received complete data."
+
+  - id: linux-out-of-memory
+    error: killed / out of memory
+    category: Linux
+    meaning: The process was terminated abruptly with SIGKILL (signal 9) by the Linux kernel Out-Of-Memory (OOM) killer.
+    exact_matches:
+      - "killed"
+      - "out of memory"
+      - "oom-killer"
+    patterns:
+      - '(?i)(?:signal:\s+killed|Killed|out of memory:\s+Killed process)'
+      - '(?i)oom-killer:\s+gfp_mask='
+    error_codes:
+      - "137"
+    confirmed_templates:
+      - "Process received SIGKILL (Exit code 137 / Out of Memory killer)"
+    likely_cause: System or container RAM and swap limits were completely exhausted, forcing the kernel to terminate high-memory processes.
+    possible_causes:
+      - High memory consumption in compilers, builds, or data processing jobs
+      - Memory leaks in running applications
+      - Tight container memory limit (Docker/Kubernetes limits exceeded)
+      - System has no swap space configured
+    diagnostic_steps:
+      - command: "dmesg -T | grep -i -E 'killed process|out of memory|oom_reaper'"
+        description: "Inspect kernel logs for the exact OOM killer invocation and memory state"
+      - command: "free -h"
+        description: "Check current available RAM and swap space"
+      - command: "vmstat -s"
+        description: "Display virtual memory statistics"
+    potential_solutions:
+      - description: "Add or increase swap space on the system"
+        command: "fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile"
+      - description: "Increase container memory limits in docker-compose or Kubernetes manifest"
+      - description: "Reduce compiler parallelism (e.g. make -j2 instead of make -j)"
+    warnings:
+      - "Adding swap to SSDs without care can cause heavy wear under thrashing; prioritize reducing memory footprint."
+
+  - id: linux-too-many-open-files
+    error: too many open files
+    category: Linux
+    meaning: The process or operating system has reached its configured limit for open file descriptors.
+    exact_matches:
+      - "too many open files"
+      - "emfile"
+      - "enfile"
+    patterns:
+      - '(?i)too many open files'
+      - '(?i)socket:\s+too many open files'
+    error_codes:
+      - "24"
+      - "EMFILE"
+      - "23"
+      - "ENFILE"
+    confirmed_templates:
+      - "File descriptor limit exhausted (EMFILE code 24 or ENFILE code 23)"
+    likely_cause: The process leaked file descriptors or opened thousands of network sockets/files beyond the soft ulimit.
+    possible_causes:
+      - Low default user limit (ulimit -n typically 1024)
+      - Application socket or file handle leak (files not closed in defer/finally)
+      - System-wide file descriptor limit reached (fs.file-max)
+    diagnostic_steps:
+      - command: "ulimit -n"
+        description: "Check the current shell's file descriptor limit"
+      - command: "cat /proc/sys/fs/file-nr"
+        description: "Check system-wide allocated file handles vs maximum allowed"
+      - command: "ls -1 /proc/<PID>/fd | wc -l"
+        description: "Count open file descriptors for a specific process PID"
+    potential_solutions:
+      - description: "Increase the file descriptor limit in the current shell session"
+        command: "ulimit -n 65535"
+      - description: "Persist increased limits in /etc/security/limits.conf"
+    warnings:
+      - "Do not set unlimited file descriptors system-wide without verifying memory constraints."

@@ -1,0 +1,95 @@
+rules:
+  - id: dns-nxdomain
+    error: dns nxdomain (non-existent domain)
+    category: DNS
+    meaning: The authoritative DNS server returned NXDOMAIN (RCODE 3), indicating that the requested domain name does not exist.
+    exact_matches:
+      - "nxdomain"
+      - "non-existent domain"
+      - "could not resolve host"
+    patterns:
+      - '(?i)curl:\s+\(\d+\)\s+Could not resolve host:\s+(?P<domain>\S+)'
+      - '(?i)status:\s+NXDOMAIN'
+      - '(?i);;\s+->>HEADER<<-\s+opcode:\s+QUERY,\s+status:\s+NXDOMAIN'
+      - '(?i)dial tcp: lookup (?P<domain>[^\s:]+): no such host'
+    confirmed_templates:
+      - "Target domain: {{if .domain}}{{.domain}}{{else}}<domain>{{end}}"
+      - "DNS resolver returned authoritative NXDOMAIN response"
+    likely_cause: The domain name is misspelled, has expired, or the DNS record has not yet propagated.
+    possible_causes:
+      - Typo in domain name or subdomain
+      - Missing DNS A, AAAA, or CNAME record in domain registrar zone file
+      - Domain registration expired or suspended
+      - DNS propagation delay after updating records (TTL expiration pending)
+    diagnostic_steps:
+      - command: "dig {{if .domain}}{{.domain}}{{else}}<domain>{{end}} +trace"
+        description: "Trace DNS delegation from root servers down to authoritative name servers"
+      - command: "nslookup {{if .domain}}{{.domain}}{{else}}<domain>{{end}} 8.8.8.8"
+        description: "Test resolution against a public resolver (Google DNS) to rule out local cache issues"
+      - command: "whois {{if .domain}}{{.domain}}{{else}}<domain>{{end}}"
+        description: "Check domain registration status and expiry date"
+    potential_solutions:
+      - description: "Correct the hostname spelling in your configuration or command"
+      - description: "Add the required A or CNAME record in your DNS provider control panel"
+    warnings:
+      - "DNS TTL (time-to-live) can take minutes to hours to propagate worldwide; avoid repeated flushes."
+
+  - id: dns-servfail
+    error: dns servfail (server failure)
+    category: DNS
+    meaning: The recursive DNS resolver was unable to obtain an answer from the authoritative name servers (RCODE 2).
+    exact_matches:
+      - "servfail"
+      - "dns server failure"
+    patterns:
+      - '(?i)status:\s+SERVFAIL'
+      - "(?i)server can't find .*: SERVFAIL"
+    confirmed_templates:
+      - "DNS query returned SERVFAIL (RCODE 2)"
+    likely_cause: Authoritative nameservers for the domain are offline, misconfigured, or DNSSEC validation failed.
+    possible_causes:
+      - DNSSEC validation failure (broken or expired RRSIG / DS records)
+      - All authoritative nameservers for the domain are unreachable or timed out
+      - Circular CNAME loops or lame delegation
+    diagnostic_steps:
+      - command: "dig {{if .domain}}{{.domain}}{{else}}<domain>{{end}} +cd"
+        description: "Query with Checking Disabled (+cd) to test if DNSSEC validation failure is the culprit"
+      - command: "dig {{if .domain}}{{.domain}}{{else}}<domain>{{end}} NS"
+        description: "Inspect NS records for the zone"
+    potential_solutions:
+      - description: "If DNSSEC failed, verify and update DS records at your domain registrar"
+      - description: "Inspect authoritative nameserver responsiveness"
+    warnings:
+      - "Do not permanently disable DNSSEC checking in production resolvers as it prevents spoofing protections."
+
+  - id: dns-temporary-failure
+    error: temporary failure in name resolution
+    category: DNS
+    meaning: The local operating system cannot contact any configured DNS resolver specified in /etc/resolv.conf.
+    exact_matches:
+      - "temporary failure in name resolution"
+      - "eai_again"
+    patterns:
+      - '(?i)temporary failure in name resolution'
+      - '(?i)EAI_AGAIN'
+    confirmed_templates:
+      - "Local system resolver cannot reach any configured DNS upstream nameservers (EAI_AGAIN)"
+    likely_cause: Network connectivity is down, /etc/resolv.conf is empty or contains unreachable nameservers, or local systemd-resolved is stopped.
+    possible_causes:
+      - Network interface is down or disconnected from gateway
+      - /etc/resolv.conf is misconfigured or missing
+      - Local DNS proxy daemon (systemd-resolved, dnsmasq) crashed
+      - Firewall blocking outbound UDP/TCP port 53
+    diagnostic_steps:
+      - command: "cat /etc/resolv.conf"
+        description: "Inspect currently configured upstream DNS nameservers"
+      - command: "ping -c 3 1.1.1.1"
+        description: "Test basic IP-level internet connectivity to verify if routing works"
+      - command: "systemctl status systemd-resolved"
+        description: "Check if local systemd-resolved DNS daemon is running"
+    potential_solutions:
+      - description: "Restart systemd-resolved or NetworkManager"
+        command: "sudo systemctl restart systemd-resolved"
+      - description: "Add a fallback public DNS resolver (e.g. 1.1.1.1 or 8.8.8.8) to /etc/resolv.conf"
+    warnings:
+      - "Manual edits to /etc/resolv.conf may be overwritten automatically by NetworkManager or systemd-resolved on reboot."

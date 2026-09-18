@@ -1,0 +1,106 @@
+rules:
+  - id: pkg-apt-lock
+    error: apt / dpkg could not get lock
+    category: Package Managers
+    meaning: Another process is currently using the dpkg/apt database lock files, or a previous installation was interrupted.
+    exact_matches:
+      - "could not get lock /var/lib/dpkg/lock"
+      - "unable to acquire the dpkg frontend lock"
+    patterns:
+      - '(?i)E:\s+Could not get lock (?P<lockfile>/var/lib/\S+)'
+      - '(?i)Unable to acquire the dpkg frontend lock'
+      - '(?i)is another process using it\?'
+    confirmed_templates:
+      - "Lock file: {{if .lockfile}}{{.lockfile}}{{else}}/var/lib/dpkg/lock{{end}}"
+      - "dpkg database lock held by another process"
+    likely_cause: Background automatic updates (unattended-upgrades), Software Center, or another terminal session is running apt.
+    possible_causes:
+      - Automatic background updates (unattended-upgrades) are installing security patches
+      - Another terminal or user is running apt or dpkg
+      - A previous apt run was killed forcefully, leaving orphaned lock files
+    diagnostic_steps:
+      - command: "sudo lsof /var/lib/dpkg/lock-frontend"
+        description: "Check which PID holds the dpkg frontend lock"
+      - command: "ps aux | grep -iE 'apt|dpkg|unattended'"
+        description: "Identify any active package manager processes"
+    potential_solutions:
+      - description: "Wait for background automatic updates to finish"
+      - description: "If dpkg was interrupted, run configure to repair"
+        command: "sudo dpkg --configure -a"
+    warnings:
+      - "Never delete /var/lib/dpkg/lock files while an apt/dpkg process is actively running, as this can corrupt the package database."
+
+  - id: pkg-pip-externally-managed
+    error: pip externally-managed-environment
+    category: Package Managers
+    meaning: Python PEP 668 restricts installing packages directly into the system Python environment to prevent breaking OS packages.
+    exact_matches:
+      - "externally-managed-environment"
+      - "this environment is externally managed"
+    patterns:
+      - '(?i)error:\s+externally-managed-environment'
+      - '(?i)This environment is externally managed'
+    confirmed_templates:
+      - "PEP 668 protection active on system Python environment"
+    likely_cause: Attempting to run 'pip install' globally into system Python on modern Debian, Ubuntu 23+, Fedora, or Arch Linux.
+    possible_causes:
+      - Running 'pip install' directly without a virtual environment
+      - Mixing system OS apt/deb packages with global pip packages
+    diagnostic_steps:
+      - command: "which python3"
+        description: "Check which Python binary is currently active"
+    potential_solutions:
+      - description: "Create and activate a dedicated virtual environment"
+        command: "python3 -m venv .venv && source .venv/bin/activate"
+      - description: "Use pipx for standalone command-line tools"
+        command: "pipx install <package>"
+    warnings:
+      - "Do not use '--break-system-packages' unless inside an isolated throwaway container."
+
+  - id: pkg-npm-eresolve
+    error: npm ERESOLVE unable to resolve dependency tree
+    category: Package Managers
+    meaning: npm encountered conflicting peer dependencies between packages defined in package.json.
+    exact_matches:
+      - "eresolve unable to resolve dependency tree"
+      - "eresolve"
+    patterns:
+      - '(?i)npm ERR!\s+code ERESOLVE'
+      - '(?i)npm ERR!\s+ERESOLVE unable to resolve dependency tree'
+    confirmed_templates:
+      - "npm peer dependency conflict encountered"
+    likely_cause: Two or more dependencies require incompatible peer versions of the same library (e.g. React 18 vs React 19).
+    possible_causes:
+      - Outdated third-party plugin that does not yet support the latest framework version
+      - Incompatible version ranges in package.json dependencies
+    diagnostic_steps:
+      - command: "npm ls <conflicting-package>"
+        description: "Display the dependency tree for the conflicting package"
+    potential_solutions:
+      - description: "Install with legacy peer dependency resolution"
+        command: "npm install --legacy-peer-deps"
+      - description: "Upgrade or downgrade the conflicting dependencies to compatible versions"
+    warnings:
+      - "'--force' can result in broken runtime packages; prefer '--legacy-peer-deps' or resolving version mismatches."
+
+  - id: pkg-pacman-db-lock
+    error: pacman unable to lock database
+    category: Package Managers
+    meaning: Arch Linux pacman package database is locked by another running pacman instance or a stale lock file.
+    exact_matches:
+      - "unable to lock database"
+      - "failed to init transaction (unable to lock database)"
+    patterns:
+      - '(?i)error:\s+failed to init transaction \(unable to lock database\)'
+      - '(?i)db\.lck'
+    confirmed_templates:
+      - "pacman database lock file exists (/var/lib/pacman/db.lck)"
+    likely_cause: Another pacman/yay process is running, or a previous operation was abruptly halted during installation.
+    diagnostic_steps:
+      - command: "pgrep -l pacman"
+        description: "Check if pacman is currently active in another session"
+    potential_solutions:
+      - description: "If no pacman process is running, remove the stale lock file"
+        command: "sudo rm /var/lib/pacman/db.lck"
+    warnings:
+      - "Ensure pacman is not running before removing db.lck to avoid database corruption."

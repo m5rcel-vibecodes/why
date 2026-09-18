@@ -1,0 +1,116 @@
+rules:
+  - id: systemd-unit-not-found
+    error: systemd unit not found
+    category: systemd
+    meaning: systemd could not locate a unit configuration file (.service, .timer, etc.) matching the requested name.
+    exact_matches:
+      - "unit not found"
+      - "failed to start: unit not found"
+    patterns:
+      - '(?i)Failed to start (?P<unit>\S+):\s+Unit (?:[^\s]+) not found'
+      - '(?i)Unit (?P<unit>\S+) could not be found'
+    confirmed_templates:
+      - "Target service unit: {{if .unit}}{{.unit}}{{else}}<unit>{{end}}"
+      - "No matching unit file found in systemd load paths"
+    likely_cause: The service package is not installed, the service unit name is mistyped, or newly installed unit files have not been loaded with daemon-reload.
+    possible_causes:
+      - Service name misspelling (e.g. 'nginx.service' vs 'apache2.service')
+      - Package providing the service is not installed
+      - Unit file was placed in /etc/systemd/system/ but 'systemctl daemon-reload' was not executed
+    diagnostic_steps:
+      - command: "systemctl list-unit-files '{{if .unit}}*{{.unit}}*{{else}}*{{end}}'"
+        description: "Search systemd unit list for similar or matching names"
+      - command: "systemctl daemon-reload"
+        description: "Reload systemd manager configuration to discover new unit files"
+    potential_solutions:
+      - description: "Install package that provides this system service"
+      - description: "Check unit files in /etc/systemd/system/ and /lib/systemd/system/"
+    warnings:
+      - "Verify unit configuration syntax before reloading systemd in production."
+
+  - id: systemd-exec-failure
+    error: systemd status=203/EXEC
+    category: systemd
+    meaning: systemd failed to execute the command specified in the ExecStart directive because the executable could not be found or executed.
+    exact_matches:
+      - "status=203/exec"
+      - "203/exec"
+    patterns:
+      - '(?i)Process:\s+\d+\s+ExecStart=.*\(code=exited,\s+status=203/EXEC\)'
+      - '(?i)status=203/EXEC'
+    error_codes:
+      - "203"
+    confirmed_templates:
+      - "systemd exit status 203: Executable path cannot be invoked"
+    likely_cause: The binary specified in ExecStart does not exist, lacks execute permissions, or has an invalid shebang interpreter line.
+    possible_causes:
+      - Executable path specified in ExecStart does not exist or has a typo
+      - Executable missing execute mode bit (+x)
+      - "Script shebang (e.g. #!/bin/bash or #!/usr/bin/python3) references a missing binary"
+      - Architecture mismatch (e.g. x86_64 binary on arm64 host)
+    diagnostic_steps:
+      - command: "journalctl -u <unit> -n 30 --no-pager"
+        description: "Inspect detailed startup failure messages in journal logs"
+      - command: "systemctl cat <unit>"
+        description: "View the unit definition to inspect the exact ExecStart line"
+    potential_solutions:
+      - description: "Ensure the binary path in ExecStart is absolute and exists"
+      - description: "Ensure executable permissions are granted on the binary"
+        command: "chmod +x /path/to/binary"
+    warnings:
+      - "Never use relative paths in systemd ExecStart directives; systemd requires absolute paths."
+
+  - id: systemd-unit-masked
+    error: systemd unit is masked
+    category: systemd
+    meaning: The unit has been explicitly masked, symlinked to /dev/null, preventing it from ever being started manually or automatically.
+    exact_matches:
+      - "unit is masked"
+      - "failed to start: unit is masked"
+    patterns:
+      - '(?i)Failed to (?:start|enable) (?P<unit>\S+):\s+Unit\s+(?:[^\s]+)\s+is masked'
+    confirmed_templates:
+      - "Unit: {{if .unit}}{{.unit}}{{else}}<unit>{{end}}"
+      - "Unit configuration symlinked to /dev/null"
+    likely_cause: An administrator or package installer masked the unit to strictly forbid it from running.
+    possible_causes:
+      - Unit was manually masked via 'systemctl mask'
+      - Conflicting service mask applied by distribution package manager
+    diagnostic_steps:
+      - command: "ls -l /etc/systemd/system/{{if .unit}}{{.unit}}{{else}}*.service{{end}}"
+        description: "Check if the unit file is symlinked to /dev/null"
+    potential_solutions:
+      - description: "Unmask the unit to allow starting"
+        command: "sudo systemctl unmask {{if .unit}}{{.unit}}{{else}}<unit>{{end}}"
+    warnings:
+      - "Ensure you understand why a unit was masked before unmasking it (may conflict with another running daemon)."
+
+  - id: systemd-start-limit-hit
+    error: systemd start request repeated too quickly
+    category: systemd
+    meaning: The service crashed repeatedly in a short duration, triggering systemd's restart rate-limiting safety mechanism.
+    exact_matches:
+      - "start request repeated too quickly"
+      - "start-limit-hit"
+    patterns:
+      - '(?i)Failed to start .*: Start request repeated too quickly'
+      - '(?i)Job for (?P<unit>\S+) failed because the control process exited with error code'
+      - '(?i)unit entered failed state.*start-limit-hit'
+    confirmed_templates:
+      - "Service crash-looping triggered systemd rate limiting"
+    likely_cause: The underlying program fails immediately on startup (bad configuration, missing file, port conflict, wrong user).
+    possible_causes:
+      - Syntax error or missing configuration file for the daemon
+      - Required port is already bound by another process
+      - Database or required dependency service is not running
+      - Database migrations or permissions failing
+    diagnostic_steps:
+      - command: "journalctl -u {{if .unit}}{{.unit}}{{else}}<unit>{{end}} -e -n 50 --no-pager"
+        description: "Inspect application crash logs leading to the restart cycle"
+      - command: "systemctl status {{if .unit}}{{.unit}}{{else}}<unit>{{end}}"
+        description: "View recent process exit codes and statuses"
+    potential_solutions:
+      - description: "Reset the failed restart counter after fixing the root crash cause"
+        command: "sudo systemctl reset-failed {{if .unit}}{{.unit}}{{else}}<unit>{{end}}"
+    warnings:
+      - "Resetting failed state without fixing the underlying configuration error will cause the crash loop to resume."

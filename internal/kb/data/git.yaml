@@ -1,0 +1,185 @@
+rules:
+  - id: git-non-fast-forward
+    error: git push rejected (non-fast-forward)
+    category: Git
+    meaning: The remote branch contains commits that you do not have locally in your local branch.
+    exact_matches:
+      - "non-fast-forward"
+      - "updates were rejected because the remote contains work that you do not have locally"
+    patterns:
+      - '(?i)updates were rejected because the tip of your current branch is behind'
+      - '(?i)updates were rejected because the remote contains work that you do not have locally'
+      - '(?i)\[rejected\]\s+(?P<branch>\S+)\s+->\s+\S+\s+\(non-fast-forward\)'
+    confirmed_templates:
+      - "Target branch: {{if .branch}}{{.branch}}{{else}}current branch{{end}}"
+      - "Remote repository is ahead of local commit history"
+    likely_cause: Another collaborator or workflow pushed commits to the remote branch since you last pulled.
+    possible_causes:
+      - Another developer pushed commits to the branch
+      - Commits were created directly via web UI (e.g. GitHub merge or PR edit)
+      - You rebased or amended commits locally that were previously pushed
+    diagnostic_steps:
+      - command: "git fetch origin"
+        description: "Fetch the latest remote branches and commits without merging"
+      - command: "git status"
+        description: "Check how many commits your branch is behind and ahead"
+      - command: "git log --oneline --graph --boundary ..origin/HEAD"
+        description: "View remote commits that are missing from your local history"
+    potential_solutions:
+      - description: "Fetch and rebase your local commits on top of the remote branch"
+        command: "git pull --rebase origin {{if .branch}}{{.branch}}{{else}}<branch>{{end}}"
+      - description: "Fetch and merge the remote branch"
+        command: "git pull origin {{if .branch}}{{.branch}}{{else}}<branch>{{end}}"
+    warnings:
+      - "Avoid using 'git push --force' on shared branches. Use '--force-with-lease' if force-pushing after an intentional rebase."
+
+  - id: git-merge-conflict
+    error: git merge conflict
+    category: Git
+    meaning: Git encountered conflicting changes in one or more files that could not be automatically reconciled.
+    exact_matches:
+      - "merge conflict"
+      - "automatic merge failed; fix conflicts and then commit the result"
+    patterns:
+      - '(?i)CONFLICT\s+\((?:content|modify/delete)\):\s+Merge conflict in (?P<file>\S+)'
+      - '(?i)Automatic merge failed;\s+fix conflicts and then commit the result'
+    confirmed_templates:
+      - "Conflicted file: {{if .file}}{{.file}}{{else}}<conflicted files>{{end}}"
+      - "Automatic 3-way merge could not resolve divergent lines"
+    likely_cause: The same lines in a file were modified differently in both branches, or a file was deleted in one branch and modified in another.
+    possible_causes:
+      - Simultaneous edits to overlapping lines by different authors
+      - Differing line ending conversions (CRLF vs LF) across operating systems
+      - Merging a long-running branch after extensive refactoring
+    diagnostic_steps:
+      - command: "git status"
+        description: "List all unmerged paths and conflict statuses"
+      - command: "git diff --name-only --diff-filter=U"
+        description: "List only the files currently in conflict"
+      - command: "git diff {{if .file}}{{.file}}{{else}}<file>{{end}}"
+        description: "View exact conflicting lines bounded by <<<<<<<, =======, >>>>>>>"
+    potential_solutions:
+      - description: "Open conflicted files, resolve markers, stage, and complete the merge"
+        command: "git add {{if .file}}{{.file}}{{else}}<file>{{end}} && git commit"
+      - description: "Abort the merge and return to the state before the merge attempt"
+        command: "git merge --abort"
+    warnings:
+      - "Do not stage files containing unresolved <<<<<<< or >>>>>>> markers."
+
+  - id: git-permission-denied-remote
+    error: git remote permission denied
+    category: Git
+    meaning: The remote Git host (GitHub, GitLab, Bitbucket) refused authentication or authorization for the repository.
+    exact_matches:
+      - "permission to repository denied"
+      - "fatal: could not read from remote repository"
+    patterns:
+      - '(?i)Permission to (?P<repo>\S+) denied to (?P<user>\S+)'
+      - '(?i)fatal:\s+Could not read from remote repository\.\s+Please make sure you have the correct access rights'
+      - '(?i)remote:\s+Invalid username or token'
+    confirmed_templates:
+      - "Target repository: {{if .repo}}{{.repo}}{{else}}<repo>{{end}}"
+      - "Authenticated identity: {{if .user}}{{.user}}{{else}}<user>{{end}}"
+    likely_cause: SSH key not added to your Git hosting account, expired personal access token (PAT), or insufficient collaborator permissions.
+    possible_causes:
+      - SSH agent not running or private key not loaded into ssh-agent
+      - Wrong SSH key sent to the host
+      - Personal Access Token expired or lacks 'repo' scopes
+      - Repository does not exist or was renamed/made private
+      - Organization requires SSO authorization on SSH keys or PATs
+    diagnostic_steps:
+      - command: "ssh -T git@github.com"
+        description: "Test SSH authentication with GitHub (or replace with your Git host)"
+      - command: "ssh-add -l"
+        description: "List SSH keys currently loaded in your authentication agent"
+      - command: "git remote -v"
+        description: "Inspect remote URLs to check for HTTPS vs SSH protocol"
+    potential_solutions:
+      - description: "Add your SSH private key to the running SSH agent"
+        command: "ssh-add ~/.ssh/id_ed25519"
+      - description: "Switch remote URL between SSH and HTTPS if needed"
+        command: "git remote set-url origin git@github.com:user/repo.git"
+    warnings:
+      - "Never commit SSH private keys or Personal Access Tokens to repository history."
+
+  - id: git-unrelated-histories
+    error: refusing to merge unrelated histories
+    category: Git
+    meaning: Git refused to merge two branches because they do not share a common root ancestor commit.
+    exact_matches:
+      - "fatal: refusing to merge unrelated histories"
+      - "unrelated histories"
+    patterns:
+      - '(?i)fatal:\s+refusing to merge unrelated histories'
+    confirmed_templates:
+      - "Git 3-way merge blocked due to disconnected commit trees"
+    likely_cause: A new local repository was created with 'git init' while the remote was also initialized separately (e.g. with a README or LICENSE).
+    possible_causes:
+      - Independent 'git init' performed locally while remote repository was also created with files
+      - Merging two distinct projects or forks that never shared a commit
+    diagnostic_steps:
+      - command: "git log --oneline -n 3"
+        description: "Examine the local commit root"
+      - command: "git log origin/main --oneline -n 3"
+        description: "Examine the remote commit root"
+    potential_solutions:
+      - description: "Allow merging unrelated histories if you are intentionally uniting two codebases"
+        command: "git pull origin main --allow-unrelated-histories"
+    warnings:
+      - "Merging unrelated histories will combine root trees and may cause significant initial file conflicts."
+
+  - id: git-index-lock
+    error: git index.lock exists
+    category: Git
+    meaning: A lock file '.git/index.lock' exists, preventing other Git operations from modifying the staging area or index.
+    exact_matches:
+      - "unable to create index.lock"
+      - "index.lock file exists"
+    patterns:
+      - '(?i)fatal:\s+Unable to create .*\.git/index\.lock.*:\s+File exists'
+    confirmed_templates:
+      - "Git index is locked by an existing process or interrupted command"
+    likely_cause: Another Git command (e.g. IDE background fetch, linter, commit) is currently running, or a previous Git command crashed mid-execution.
+    possible_causes:
+      - Background IDE indexing or auto-fetching (VS Code, IntelliJ)
+      - A previous Git command was forcefully terminated (Ctrl+C or kill -9) leaving the lock file
+      - Antivirus scanning the .git directory
+    diagnostic_steps:
+      - command: "pgrep -lf git"
+        description: "Check if any background Git process is currently running"
+      - command: "ls -l .git/index.lock"
+        description: "Check the modification timestamp on the lock file to verify staleness"
+    potential_solutions:
+      - description: "If no Git process is running and the lock is stale, remove it safely"
+        command: "rm -f .git/index.lock"
+    warnings:
+      - "Never delete index.lock while a Git command is actively writing to the repository, as this can corrupt the index."
+
+  - id: git-not-a-repository
+    error: not a git repository
+    category: Git
+    meaning: The current directory and its parent directories do not contain a '.git' directory.
+    exact_matches:
+      - "fatal: not a git repository (or any of the parent directories): .git"
+      - "not a git repository"
+    patterns:
+      - '(?i)fatal:\s+not a git repository \(or any of the parent directories\):\s+\.git'
+    confirmed_templates:
+      - "Current working directory is not inside an initialized Git work tree"
+    likely_cause: You are executing a Git command in a folder that was never initialized with Git or cloned.
+    possible_causes:
+      - Current shell is in the wrong directory
+      - Unzipped source archive instead of git clone
+      - Project has not yet been initialized
+    diagnostic_steps:
+      - command: "pwd"
+        description: "Verify your current working directory path"
+      - command: "ls -la"
+        description: "Check for hidden directories (.git) in the current directory"
+    potential_solutions:
+      - description: "Initialize a new Git repository here"
+        command: "git init"
+      - description: "Navigate into the correct project subdirectory"
+        command: "cd <project-directory>"
+    warnings:
+      - "Running 'git init' inside an existing parent repo creates nested repositories; verify directory first."

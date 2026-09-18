@@ -1,0 +1,86 @@
+rules:
+  - id: node-module-not-found
+    error: node cannot find module
+    category: Node.js
+    meaning: Node.js cannot resolve the requested module path or package name from the current file's directory or node_modules.
+    exact_matches:
+      - "cannot find module"
+      - "err_module_not_found"
+    patterns:
+      - "(?i)Error:\\s+Cannot find module '(?P<module>[^']+)'"
+      - "(?i)code:\\s+'MODULE_NOT_FOUND'"
+      - '(?i)ERR_MODULE_NOT_FOUND'
+    confirmed_templates:
+      - "Missing module: {{if .module}}{{.module}}{{else}}<module>{{end}}"
+      - "Node.js module resolution failed (MODULE_NOT_FOUND)"
+    likely_cause: The npm package is not installed in node_modules, or a relative file path is misspelled or missing an extension.
+    possible_causes:
+      - "'npm install' was not run after cloning or pulling new commits"
+      - Typo in package name or file import path
+      - Package installed globally (-g) instead of locally in project
+      - Missing file extension (.js / .mjs) when using ECMAScript modules (ESM)
+    diagnostic_steps:
+      - command: "npm ls {{if .module}}{{.module}}{{else}}<module>{{end}}"
+        description: "Check if the package is installed in the local project tree"
+      - command: "ls -d node_modules/{{if .module}}{{.module}}{{else}}*{{end}}"
+        description: "Verify presence in local node_modules directory"
+    potential_solutions:
+      - description: "Install project dependencies"
+        command: "npm install"
+      - description: "Install the specific missing dependency"
+        command: "npm install {{if .module}}{{.module}}{{else}}<package>{{end}}"
+    warnings:
+      - "Avoid committing node_modules/ to version control."
+
+  - id: node-heap-out-of-memory
+    error: node javascript heap out of memory
+    category: Node.js
+    meaning: The V8 JavaScript engine exceeded its allocated heap memory limit and was forced to abort execution.
+    exact_matches:
+      - "javascript heap out of memory"
+      - "v8 out of memory"
+    patterns:
+      - '(?i)FATAL ERROR:\s+(?:Re-reached heap limit\s+)?Allocation failed - JavaScript heap out of memory'
+      - '(?i)JavaScript heap out of memory'
+    confirmed_templates:
+      - "V8 engine heap limit exhausted; process aborted"
+    likely_cause: Heavy build processes (Webpack/Vite/TypeScript compilation), large data processing in memory, or memory leak in JavaScript objects.
+    possible_causes:
+      - Node default memory limit (typically 2GB or 4GB) is too small for large builds
+      - Memory leak caused by unbounded global caches or unremoved event listeners
+      - Processing very large JSON files using JSON.parse instead of streaming
+    diagnostic_steps:
+      - command: "node -e 'console.log(v8.getHeapStatistics())'"
+        description: "Check current V8 heap default limits"
+    potential_solutions:
+      - description: "Increase maximum old space size limit via environment variable"
+        command: "NODE_OPTIONS='--max-old-space-size=8192' npm run build"
+    warnings:
+      - "Increasing heap limits works around memory bugs temporarily; analyze memory leaks with heap snapshots for permanent fixes."
+
+  - id: node-require-esm
+    error: node err_require_esm
+    category: Node.js
+    meaning: CommonJS require() was used to load an ES Module (ESM), which is not permitted synchronously in Node.js.
+    exact_matches:
+      - "err_require_esm"
+      - "require() of es module is not supported"
+    patterns:
+      - '(?i)Error \[ERR_REQUIRE_ESM\]:\s+require\(\) of ES Module .* not supported'
+      - '(?i)ERR_REQUIRE_ESM'
+    confirmed_templates:
+      - "Synchronous require() called on pure ECMAScript Module (ERR_REQUIRE_ESM)"
+    likely_cause: Attempting to import an ESM-only package (e.g. chalk v5, node-fetch v3) using require() in CommonJS.
+    possible_causes:
+      - Dependency updated to pure ESM release
+      - "Project package.json lacks type: module"
+    diagnostic_steps:
+      - command: "cat package.json | grep '\"type\"'"
+        description: "Check if project is configured for ES modules"
+    potential_solutions:
+      - description: "Add \"type\": \"module\" to package.json to use import syntax throughout project"
+      - description: "Use dynamic import() instead of require()"
+        command: "const pkg = await import('package-name');"
+      - description: "Downgrade to the previous CommonJS-compatible major version of the dependency"
+    warnings:
+      - "Adding 'type': 'module' requires updating all require() calls to ESM import in your project."

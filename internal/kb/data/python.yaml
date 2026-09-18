@@ -1,0 +1,87 @@
+rules:
+  - id: py-module-not-found
+    error: python modulenotfounderror
+    category: Python
+    meaning: The Python interpreter cannot find or import the specified module in sys.path or the active virtual environment.
+    exact_matches:
+      - "modulenotfounderror"
+      - "no module named"
+    patterns:
+      - "(?i)ModuleNotFoundError:\\s+No module named '(?P<module>[^']+)'"
+      - '(?i)ImportError:\s+No module named (?P<module>\S+)'
+    confirmed_templates:
+      - "Missing module: {{if .module}}{{.module}}{{else}}<module>{{end}}"
+      - "Python import resolution failed on sys.path"
+    likely_cause: The required library is not installed in the currently active Python environment, or virtual environment is not activated.
+    possible_causes:
+      - Virtual environment not activated (running system Python instead of venv)
+      - Package not installed with pip
+      - Current working directory or PYTHONPATH missing the local package root
+      - Typo in import statement or package name
+    diagnostic_steps:
+      - command: "which python3 && which pip"
+        description: "Verify active Python interpreter and pip paths"
+      - command: "python3 -c 'import sys; print(sys.path)'"
+        description: "Inspect Python module search paths"
+      - command: "pip list | grep -i {{if .module}}{{.module}}{{else}}<module>{{end}}"
+        description: "Check if the module is installed in the active environment"
+    potential_solutions:
+      - description: "Activate your project virtual environment"
+        command: "source .venv/bin/activate"
+      - description: "Install the missing package into the environment"
+        command: "pip install {{if .module}}{{.module}}{{else}}<module>{{end}}"
+    warnings:
+      - "Avoid running 'sudo pip install' as it can break system distribution packages."
+
+  - id: py-indentation-error
+    error: python indentationerror
+    category: Python
+    meaning: Python parser detected inconsistent whitespace or tab indentation that violates block syntax rules.
+    exact_matches:
+      - "indentationerror"
+      - "unexpected indent"
+    patterns:
+      - '(?i)IndentationError:\s+unexpected indent'
+      - '(?i)IndentationError:\s+unindent does not match any outer indentation level'
+      - '(?i)TabError:\s+inconsistent use of tabs and spaces in indentation'
+    confirmed_templates:
+      - "Python block indentation violation detected by parser"
+    likely_cause: Mixing tabs and spaces in the same source file, or inconsistent indentation depth (e.g. 3 spaces vs 4 spaces).
+    possible_causes:
+      - Editor configured to insert literal tabs while rest of file uses spaces
+      - Misaligned copy-pasted code block
+    diagnostic_steps:
+      - command: "python3 -m py_compile <file.py>"
+        description: "Check syntax and pinpoint exact line and column number of indentation failure"
+    potential_solutions:
+      - description: "Format code with Black, Ruff, or autopep8"
+        command: "ruff format <file.py>"
+      - description: "Configure editor to convert tabs to 4 spaces"
+    warnings:
+      - "Do not mix tabs and spaces in Python 3 source files."
+
+  - id: py-recursion-error
+    error: python recursionerror
+    category: Python
+    meaning: A function called itself repeatedly without reaching a base case, exceeding the interpreter's maximum call stack limit.
+    exact_matches:
+      - "recursionerror"
+      - "maximum recursion depth exceeded"
+    patterns:
+      - '(?i)RecursionError:\s+maximum recursion depth exceeded'
+      - '(?i)maximum recursion depth exceeded in comparison'
+    confirmed_templates:
+      - "Call stack exceeded sys.getrecursionlimit() (typically 1000 frames)"
+    likely_cause: Infinite recursion caused by a missing termination condition or mutual circular function calls.
+    possible_causes:
+      - Missing base case in recursive algorithm
+      - Circular __getattr__ or property getter calls
+      - Recursive __eq__ or __repr__ implementation
+    diagnostic_steps:
+      - command: "python3 -c 'import sys; print(sys.getrecursionlimit())'"
+        description: "Check current recursion limit"
+    potential_solutions:
+      - description: "Ensure recursive base case is reached and terminates"
+      - description: "Refactor recursive algorithm into an iterative loop with an explicit stack"
+    warnings:
+      - "Increasing sys.setrecursionlimit without fixing infinite recursion causes fatal C-level segmentation faults."

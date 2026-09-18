@@ -1,0 +1,89 @@
+rules:
+  - id: dotnet-cs0246-type-not-found
+    error: .NET CS0246 type or namespace not found
+    category: .NET
+    meaning: The C# compiler (Roslyn) cannot find the specified class, interface, struct, or namespace name in referenced assemblies.
+    exact_matches:
+      - "cs0246"
+      - "the type or namespace name could not be found"
+    patterns:
+      - "(?i)error CS0246:\\s+The type or namespace name '(?P<type>[^']+)' could not be found"
+    error_codes:
+      - "CS0246"
+    confirmed_templates:
+      - "Unresolved type/namespace: {{if .type}}{{.type}}{{else}}<type>{{end}}"
+      - "C# compilation error CS0246"
+    likely_cause: Missing 'using' directive at the top of the file, or missing NuGet package reference in the .csproj file.
+    possible_causes:
+      - "Missing 'using Namespace;' directive in the C# source file"
+      - Missing NuGet package reference in the project file
+      - Project reference between internal solution projects is missing
+      - Target framework mismatch (e.g. .NET 8 vs .NET Standard 2.0)
+    diagnostic_steps:
+      - command: "dotnet list package"
+        description: "List all NuGet packages currently installed in the project"
+      - command: "dotnet restore"
+        description: "Restore NuGet packages declared in the solution"
+    potential_solutions:
+      - description: "Add the missing using directive at the top of the file"
+      - description: "Add required NuGet package via dotnet CLI"
+        command: "dotnet add package <PackageName>"
+    warnings:
+      - "Ensure installed NuGet package versions are compatible with your TargetFramework."
+
+  - id: dotnet-null-reference
+    error: .NET System.NullReferenceException
+    category: .NET
+    meaning: The Common Language Runtime (CLR) attempted to dereference a null object reference.
+    exact_matches:
+      - "nullreferenceexception"
+      - "object reference not set to an instance of an object"
+    patterns:
+      - '(?i)System\.NullReferenceException:\s+Object reference not set to an instance of an object'
+    confirmed_templates:
+      - "CLR runtime exception: System.NullReferenceException"
+    likely_cause: Invoking a method, accessing a property, or indexing an array/collection on a variable that evaluates to null.
+    possible_causes:
+      - Calling a method or property on a null reference
+      - Unassigned field or failed dependency injection resolution
+      - LINQ SingleOrDefault / FirstOrDefault returning null on empty set
+    diagnostic_steps:
+      - command: "dotnet test --logger \"console;verbosity=detailed\""
+        description: "Run unit tests with detailed stack trace logging"
+    potential_solutions:
+      - description: "Enable nullable reference types (<Nullable>enable</Nullable>) in .csproj"
+      - description: "Use the null-conditional operator (?.) or null-coalescing operator (??)"
+        command: "var result = obj?.Property ?? defaultValue;"
+    warnings:
+      - "Do not suppress warnings with the null-forgiving operator (!) without asserting non-null state."
+
+  - id: dotnet-msb4019-target-not-found
+    error: .NET MSB4019 imported project not found
+    category: .NET
+    meaning: MSBuild failed to locate an imported targets or props file required to build the project.
+    exact_matches:
+      - "msb4019"
+      - "the imported project was not found"
+    patterns:
+      - '(?i)error MSB4019:\s+The imported project "(?P<target>[^"]+)" was not found'
+    error_codes:
+      - "MSB4019"
+    confirmed_templates:
+      - "Missing target file: {{if .target}}{{.target}}{{else}}<target>{{end}}"
+      - "MSBuild project import error MSB4019"
+    likely_cause: The required .NET SDK workload is not installed, or global.json specifies an unavailable SDK version.
+    possible_causes:
+      - Missing .NET SDK or workload (e.g. MAUI, Android, iOS workload)
+      - global.json pin to an older SDK that is not installed on this machine
+      - Corrupted NuGet package cache containing incomplete target props
+    diagnostic_steps:
+      - command: "dotnet --list-sdks"
+        description: "List all .NET SDKs installed on the system"
+      - command: "dotnet workload list"
+        description: "List installed .NET workloads"
+    potential_solutions:
+      - description: "Install matching .NET SDK version or adjust global.json"
+      - description: "Restore workloads if required by the project"
+        command: "dotnet workload restore"
+    warnings:
+      - "Avoid editing generated props and targets files inside obj/ or bin/ manually."
