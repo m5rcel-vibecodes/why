@@ -1,0 +1,59 @@
+rules:
+  - id: rust-e0382-moved-value
+    error: rust error[E0382] use of moved value
+    category: Rust
+    meaning: Rust borrow checker detected that ownership of a variable was moved to another owner, and the original variable was subsequently accessed.
+    exact_matches:
+      - "e0382"
+      - "use of moved value"
+    patterns:
+      - '(?i)error\[E0382\]:\s+(?:borrow of moved value|use of moved value):\s+`(?P<var>[^`]+)`'
+      - '(?i)error\[E0382\]'
+    error_codes:
+      - "E0382"
+    confirmed_templates:
+      - "Moved variable: {{if .var}}{{.var}}{{else}}<var>{{end}}"
+      - "Rust borrow checker move semantics violation (E0382)"
+    likely_cause: Passing a non-Copy type into a function by value, moving it into a closure, or reassigning it, then trying to use it again.
+    possible_causes:
+      - Variable type does not implement the Copy trait (e.g. String, Vec)
+      - Calling a method that takes 'self' by value rather than by reference (&self)
+      - Moving a value inside a loop without cloning
+    diagnostic_steps:
+      - command: "cargo check"
+        description: "Run fast compiler check to inspect compiler notes on where the value was originally moved"
+    potential_solutions:
+      - description: "Borrow the value by passing a reference (&var) instead of moving ownership"
+        command: "my_function(&{{if .var}}{{.var}}{{else}}value{{end}});"
+      - description: "Clone the value if independent ownership is required"
+        command: "let new_val = {{if .var}}{{.var}}{{else}}value{{end}}.clone();"
+    warnings:
+      - "Overusing .clone() to satisfy the borrow checker can introduce significant runtime memory allocation overhead."
+
+  - id: rust-e0502-mutable-borrow
+    error: rust error[E0502] cannot borrow as mutable
+    category: Rust
+    meaning: Rust aliasing rules forbid borrowing a value as mutable while active immutable references to the same value still exist.
+    exact_matches:
+      - "e0502"
+      - "cannot borrow as mutable"
+    patterns:
+      - '(?i)error\[E0502\]:\s+cannot borrow `(?P<var>[^`]+)` as mutable because it is also borrowed as immutable'
+      - '(?i)error\[E0502\]'
+    error_codes:
+      - "E0502"
+    confirmed_templates:
+      - "Variable: {{if .var}}{{.var}}{{else}}<var>{{end}}"
+      - "Rust Aliasing XOR Mutation rule violated (E0502)"
+    likely_cause: Calling a mutating method (&mut self) on a collection or struct while an iterator or reference into it is still in scope.
+    possible_causes:
+      - Modifying a Vec or HashMap while iterating over its elements
+      - Holding an immutable reference in a variable across a mutating call
+    diagnostic_steps:
+      - command: "cargo check"
+        description: "Inspect compiler annotations indicating where the immutable borrow occurred and where it ends"
+    potential_solutions:
+      - description: "End the immutable borrow before mutating by using a block scope {} or collecting into a Vec"
+      - description: "Use index-based access or retain() instead of mutating during iteration"
+    warnings:
+      - "Do not reach for unsafe pointers or RefCell without understanding concurrency implications."

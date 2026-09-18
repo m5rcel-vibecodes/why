@@ -1,0 +1,121 @@
+rules:
+  - id: ssh-host-key-verification-failed
+    error: ssh host key verification failed
+    category: SSH
+    meaning: The public host key presented by the remote server does not match the key recorded in your ~/.ssh/known_hosts file.
+    exact_matches:
+      - "host key verification failed"
+      - "remote host identification has changed"
+    patterns:
+      - '(?i)Host key verification failed'
+      - '(?i)WARNING:\s+REMOTE HOST IDENTIFICATION HAS CHANGED!'
+      - '(?i)IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!'
+    confirmed_templates:
+      - "SSH host key mismatch detected against ~/.ssh/known_hosts"
+    likely_cause: The remote server was reinstalled, rebuilt, re-imaged, or an IP address was reassigned to a different machine.
+    possible_causes:
+      - The server operating system was recently reinstalled or replaced
+      - A cloud VM or container was destroyed and recreated with the same IP
+      - Man-In-The-Middle (MITM) attack intercepting your connection
+      - DNS spoofing pointing the domain to a different server
+    diagnostic_steps:
+      - command: "ssh-keygen -l -f ~/.ssh/known_hosts"
+        description: "Inspect fingerprints in your local known_hosts file"
+    potential_solutions:
+      - description: "If you verified the server was intentionally rebuilt, remove the stale key"
+        command: "ssh-keygen -R <hostname_or_ip>"
+    warnings:
+      - "Do not blindly remove known_hosts entries without confirming with your infrastructure team that the server was rebuilt."
+
+  - id: ssh-permission-denied-publickey
+    error: ssh permission denied (publickey)
+    category: SSH
+    meaning: The SSH server rejected connection because none of the offered public/private key pairs were accepted for authentication.
+    exact_matches:
+      - "permission denied (publickey)"
+      - "permission denied (publickey,gssapi-keyex,gssapi-with-mic)"
+    patterns:
+      - '(?i)Permission denied \(publickey(?:,[a-zA-Z0-9_\-]+)*\)'
+    confirmed_templates:
+      - "SSH public key authentication rejected by remote server"
+    likely_cause: Your public SSH key is not present in the remote server's ~/.ssh/authorized_keys file, or private key permissions are too open.
+    possible_causes:
+      - Public key not appended to ~/.ssh/authorized_keys on the remote server
+      - Wrong SSH username specified in connection command (e.g. root vs ubuntu vs ec2-user)
+      - Permissions on remote ~/.ssh (must be 700) or authorized_keys (must be 600) are too loose, causing sshd to ignore them (StrictModes)
+      - SSH agent does not have your private key loaded
+    diagnostic_steps:
+      - command: "ssh -v <user>@<host>"
+        description: "Run SSH in verbose mode to see offered authentication keys and server responses"
+      - command: "ssh-add -l"
+        description: "List keys currently loaded in your local SSH authentication agent"
+      - command: "ls -la ~/.ssh"
+        description: "Verify local SSH directory permissions (should be 700 for ~/.ssh, 600 for private keys)"
+    potential_solutions:
+      - description: "Copy your public key to the remote server"
+        command: "ssh-copy-id <user>@<host>"
+      - description: "Ensure correct local private key permissions"
+        command: "chmod 600 ~/.ssh/id_ed25519"
+      - description: "Specify explicit private key with -i"
+        command: "ssh -i ~/.ssh/id_ed25519 <user>@<host>"
+    warnings:
+      - "Never share or transmit your private key (~/.ssh/id_rsa or id_ed25519) to anyone."
+
+  - id: ssh-bad-permissions-key
+    error: ssh private key permissions too open
+    category: SSH
+    meaning: The SSH client refused to use your private key because its file mode permissions allow other users on the system to read it.
+    exact_matches:
+      - "permissions are too open"
+      - "unprotected private key file"
+    patterns:
+      - "(?i)Permissions (?:0?[0-7]{3,4}) for '(?P<key>[^']+)' are too open"
+      - '(?i)UNPROTECTED PRIVATE KEY FILE!'
+      - '(?i)It is required that your private key files are NOT accessible by others'
+    confirmed_templates:
+      - "Private key: {{if .key}}{{.key}}{{else}}<key>{{end}}"
+      - "SSH client aborted connection due to insecure file mode on private key"
+    likely_cause: The private key file permissions allow group or other users to read or write it (e.g. 0644 or 0777).
+    possible_causes:
+      - File copied from Windows or FAT/exFAT filesystem without Unix permission bits
+      - umask created file with group-readable permissions
+      - Explicitly modified permissions
+    diagnostic_steps:
+      - command: "ls -l {{if .key}}{{.key}}{{else}}~/.ssh/id_*{{end}}"
+        description: "Inspect exact file permission mode bits"
+    potential_solutions:
+      - description: "Restrict private key permissions strictly to current user read/write (0600)"
+        command: "chmod 600 {{if .key}}{{.key}}{{else}}<private-key-path>{{end}}"
+      - description: "Ensure ~/.ssh directory has 0700 permissions"
+        command: "chmod 700 ~/.ssh"
+    warnings:
+      - "Never set private key permissions to 777 or world-readable."
+
+  - id: ssh-connection-timed-out
+    error: ssh connection timed out
+    category: SSH
+    meaning: The SSH client attempted to connect to port 22 on the remote host, but received no TCP response within the timeout deadline.
+    exact_matches:
+      - "ssh connection timed out"
+      - "connect to host port 22: connection timed out"
+    patterns:
+      - '(?i)ssh:\s+connect to host (?P<host>[^\s:]+)\s+port\s+(?P<port>\d+):\s+Connection timed out'
+    confirmed_templates:
+      - "Remote host: {{if .host}}{{.host}}{{else}}<host>{{end}} on port {{if .port}}{{.port}}{{else}}22{{end}}"
+      - "TCP SYN packets dropped with no response"
+    likely_cause: Cloud security group (AWS/GCP/Azure) or network firewall does not allow inbound TCP traffic on port 22 from your IP.
+    possible_causes:
+      - Cloud firewall or Security Group lacks an inbound rule allowing port 22
+      - Your public IP address changed (dynamic IP) and is no longer whitelisted
+      - Server is powered off or rebooting
+      - Remote sshd daemon is listening on a non-standard port
+    diagnostic_steps:
+      - command: "curl -s https://ifconfig.me"
+        description: "Check your current public IP address to verify firewall allowlists"
+      - command: "nc -zv -w 5 {{if .host}}{{.host}}{{else}}<host>{{end}} {{if .port}}{{.port}}{{else}}22{{end}}"
+        description: "Test direct TCP port reachability"
+    potential_solutions:
+      - description: "Add your current public IP to cloud firewall / security group inbound rules for port 22"
+      - description: "Connect via corporate VPN or bastion host if server is on a private subnet"
+    warnings:
+      - "Never open SSH port 22 to 0.0.0.0/0 without key-based authentication and fail2ban."

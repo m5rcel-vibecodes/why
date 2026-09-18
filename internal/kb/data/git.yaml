@@ -183,3 +183,68 @@ rules:
         command: "cd <project-directory>"
     warnings:
       - "Running 'git init' inside an existing parent repo creates nested repositories; verify directory first."
+
+  - id: git-local-changes-overwritten
+    error: git local changes would be overwritten
+    category: Git
+    meaning: Git aborted checkout, merge, or rebase because you have unstaged or uncommitted changes that conflict with incoming branch commits.
+    exact_matches:
+      - "local changes would be overwritten"
+      - "your local changes to the following files would be overwritten by checkout"
+      - "your local changes to the following files would be overwritten by merge"
+    patterns:
+      - '(?i)error:\s+Your local changes to the following files would be overwritten by (?:checkout|merge):\s+(?P<file>\S+)'
+      - '(?i)error:\s+Your local changes to the following files would be overwritten'
+    confirmed_templates:
+      - "Conflicting local file: {{if .file}}{{.file}}{{else}}<file>{{end}}"
+      - "Git blocked operation to protect uncommitted working tree edits"
+    likely_cause: You modified files locally in your working directory, and the target branch you are switching to or merging also contains modifications to those same files.
+    possible_causes:
+      - Uncommitted code edits in working directory
+      - Build artifacts or dependencies modified tracked files
+      - Automated formatter or IDE modified files in the background
+    diagnostic_steps:
+      - command: "git status"
+        description: "Review all modified, untracked, and staged files"
+      - command: "git diff {{if .file}}{{.file}}{{else}}{{end}}"
+        description: "Inspect the exact uncommitted changes in your working tree"
+    potential_solutions:
+      - description: "Temporarily shelve your uncommitted work using git stash"
+        command: "git stash && git checkout <branch> && git stash pop"
+      - description: "Commit your changes to the current branch before switching"
+        command: "git commit -am 'WIP: save local changes'"
+      - description: "Discard local modifications if they are unintended"
+        command: "git restore {{if .file}}{{.file}}{{else}}.{{end}}"
+    warnings:
+      - "'git restore' and 'git reset --hard' permanently destroy uncommitted work and cannot be undone."
+
+  - id: git-rpc-failed-413
+    error: git rpc failed (HTTP 413 Request Entity Too Large)
+    category: Git
+    meaning: The remote Git HTTP server or reverse proxy rejected the git push payload because it exceeds the maximum allowed request body size.
+    exact_matches:
+      - "rpc failed; http 413"
+      - "the requested url returned error: 413"
+    patterns:
+      - '(?i)error:\s+RPC failed;\s+HTTP 413 curl 22 The requested URL returned error:\s+413'
+      - '(?i)fatal:\s+the remote end hung up unexpectedly.*RPC failed'
+    error_codes:
+      - "413"
+    confirmed_templates:
+      - "HTTP 413 Request Entity Too Large returned during Git push"
+    likely_cause: Pushing large binary files, datasets, or video assets exceeding Git server or Nginx client_max_body_size limits.
+    possible_causes:
+      - Accidentally committing large media files, zip archives, or database dumps
+      - Reverse proxy (Nginx) in front of GitLab/Gitea configured with small client_max_body_size (e.g. 1m or 10m)
+      - Git HTTP buffer size limit exceeded
+    diagnostic_steps:
+      - command: "git verify-pack -v .git/objects/pack/*.idx | sort -k 3 -g | tail -n 5"
+        description: "Identify the largest objects in your Git repository history"
+    potential_solutions:
+      - description: "Increase local Git HTTP post buffer size"
+        command: "git config http.postBuffer 524288000"
+      - description: "Use Git Large File Storage (Git LFS) for large media files and datasets"
+        command: "git lfs track '*.zip' && git add .gitattributes"
+    warnings:
+      - "Do not store large database backups or binaries in core Git tree; Git stores all revisions permanently."
+

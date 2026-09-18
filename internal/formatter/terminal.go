@@ -12,19 +12,13 @@ func FormatTerminal(res *model.MatchResult, styler *Styler) string {
 	if res == nil {
 		return styler.Yellow("NO EXPLANATION FOUND\n\n") +
 			"The input did not match any known error patterns in the local knowledge base.\n" +
-			styler.Dim("Try checking the command syntax, or pass --ai to query an AI model.\n")
+			styler.Dim("Check the command syntax, or verify the error text.\n")
 	}
 
 	var sb strings.Builder
 
 	// Header
 	sb.WriteString(styler.Bold(styler.Cyan("WHY DID THIS HAPPEN?\n\n")))
-
-	// AI Notice if applicable
-	if res.Source == "ai" {
-		sb.WriteString(styler.Yellow(styler.Bold("[AI GENERATED EXPLANATION]")) +
-			styler.Dim(" (Generated via AI model; verify all suggestions before executing)\n\n"))
-	}
 
 	// Error Title
 	sb.WriteString(styler.Bold("Error:\n"))

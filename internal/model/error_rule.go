@@ -39,7 +39,6 @@ const (
 	MatchErrorCode MatchType = "error_code"
 	MatchRegex     MatchType = "regex"
 	MatchFuzzy     MatchType = "fuzzy"
-	MatchAI        MatchType = "ai"
 )
 
 // MatchResult is the result returned by the matcher engine.

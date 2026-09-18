@@ -9,18 +9,9 @@ import (
 
 // Config represents the application configuration.
 type Config struct {
-	RulesDir string   `yaml:"rules_dir"`
-	Color    string   `yaml:"color"`
-	JSON     bool     `yaml:"json"`
-	AI       AIConfig `yaml:"ai"`
-}
-
-// AIConfig holds settings for optional AI integration.
-type AIConfig struct {
-	Provider string `yaml:"provider"` // ollama, gemini, openai, anthropic
-	Model    string `yaml:"model"`
-	BaseURL  string `yaml:"base_url"`
-	APIKey   string `yaml:"api_key"`
+	RulesDir string `yaml:"rules_dir"`
+	Color    string `yaml:"color"`
+	JSON     bool   `yaml:"json"`
 }
 
 // DefaultConfig returns safe defaults.
@@ -35,11 +26,6 @@ func DefaultConfig() *Config {
 		RulesDir: rulesDir,
 		Color:    "auto",
 		JSON:     false,
-		AI: AIConfig{
-			Provider: "ollama",
-			Model:    "llama3",
-			BaseURL:  "http://localhost:11434",
-		},
 	}
 }
 

@@ -1,0 +1,89 @@
+rules:
+  - id: java-class-not-found
+    error: java classnotfoundexception / noclassdeffounderror
+    category: Java
+    meaning: The Java Virtual Machine (JVM) or ClassLoader attempted to load a class, but could not find the .class file on the classpath.
+    exact_matches:
+      - "classnotfoundexception"
+      - "noclassdeffounderror"
+    patterns:
+      - '(?i)java\.lang\.ClassNotFoundException:\s+(?P<class>[a-zA-Z0-9_\.\$]+)'
+      - '(?i)java\.lang\.NoClassDefFoundError:\s+(?P<class>[a-zA-Z0-9_\.\$]+)'
+    confirmed_templates:
+      - "Missing Java class: {{if .class}}{{.class}}{{else}}<class>{{end}}"
+      - "JVM ClassLoader resolution failure"
+    likely_cause: The JAR file providing the class is missing from the CLASSPATH, or Maven/Gradle dependencies were not packaged into the fat JAR.
+    possible_causes:
+      - Required dependency missing from pom.xml or build.gradle
+      - Running a standalone JAR that lacks bundled dependencies (not a shadow/uber JAR)
+      - Class was present at compile time but missing from the runtime classpath (NoClassDefFoundError)
+      - Static initializer block failed inside the target class
+    diagnostic_steps:
+      - command: "mvn dependency:tree"
+        description: "Inspect complete Maven dependency hierarchy to locate the missing package"
+      - command: "jar -tf <app.jar> | grep {{if .class}}{{.class}}{{else}}<class>{{end}}"
+        description: "Inspect contents of JAR file to see if the compiled class exists inside"
+    potential_solutions:
+      - description: "Build an executable uber-jar containing all runtime dependencies (mvn package with shade plugin)"
+      - description: "Add the required dependency to your build configuration"
+    warnings:
+      - "Do not manually copy arbitrary loose JARs into system /jre/lib/ext directory."
+
+  - id: java-heap-space-oom
+    error: java.lang.OutOfMemoryError Java heap space
+    category: Java
+    meaning: The Java Virtual Machine ran out of available heap memory and could not allocate memory for an object.
+    exact_matches:
+      - "java heap space"
+      - "outofmemoryerror: java heap space"
+    patterns:
+      - '(?i)java\.lang\.OutOfMemoryError:\s+Java heap space'
+      - '(?i)OutOfMemoryError:\s+Java heap space'
+    confirmed_templates:
+      - "JVM Heap allocation limit (-Xmx) exhausted"
+    likely_cause: The application is holding too many live objects in memory (memory leak), or the default -Xmx memory allocation is too small.
+    possible_causes:
+      - Default JVM max heap limit (typically 25% of physical RAM) is insufficient for the workload
+      - Memory leak caused by static collections, unbounded caches, or unclosed database connections
+      - Loading huge database result sets into memory instead of streaming with pagination
+    diagnostic_steps:
+      - command: "jps -v"
+        description: "List running Java processes and their configured JVM -Xmx heap parameters"
+      - command: "jstat -gcutil <PID> 1000 5"
+        description: "Monitor Java Garbage Collection frequency and heap generation capacity"
+    potential_solutions:
+      - description: "Increase maximum heap allocation via JVM argument"
+        command: "java -Xmx4g -jar <app.jar>"
+      - description: "Generate a heap dump on OOM for memory leak profiling with Eclipse Memory Analyzer"
+        command: "java -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/var/dumps/ -jar <app.jar>"
+    warnings:
+      - "Increasing -Xmx beyond available container or host RAM will cause the OS kernel to terminate Java with SIGKILL 137."
+
+  - id: java-unsupported-class-version
+    error: java unsupportedclassversionerror
+    category: Java
+    meaning: The Java class was compiled with a newer version of the Java compiler (javac) than the runtime Java Virtual Machine (java) supports.
+    exact_matches:
+      - "unsupportedclassversionerror"
+      - "has been compiled by a more recent version of the java runtime"
+    patterns:
+      - '(?i)java\.lang\.UnsupportedClassVersionError:.*has been compiled by a more recent version of the Java Runtime \(class file version (?P<ver>[0-9\.]+)\)'
+    confirmed_templates:
+      - "Class bytecode version: {{if .ver}}{{.ver}}{{else}}<version>{{end}}"
+      - "Bytecode version higher than current JRE runtime"
+    likely_cause: The project was compiled with Java 17 or Java 21, but is being executed on an older Java (e.g. Java 8 or 11).
+    possible_causes:
+      - Multiple Java versions installed on the system, and 'java -version' points to an older version than 'javac'
+      - Running modern third-party library that dropped support for older Java releases
+    diagnostic_steps:
+      - command: "java -version"
+        description: "Check your active runtime Java version"
+      - command: "javac -version"
+        description: "Check the Java compiler version installed on the machine"
+    potential_solutions:
+      - description: "Run with the required matching Java runtime"
+        command: "/usr/lib/jvm/java-17-openjdk/bin/java -jar <app.jar>"
+      - description: "Compile with --release target flag for backward compatibility"
+        command: "javac --release 11 <File.java>"
+    warnings:
+      - "Changing system-wide default Java version may affect other running services on the host."

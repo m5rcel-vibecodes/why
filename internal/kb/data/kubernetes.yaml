@@ -1,0 +1,93 @@
+rules:
+  - id: k8s-crashloopbackoff
+    error: kubernetes crashloopbackoff
+    category: Kubernetes
+    meaning: The container inside the Pod crashed immediately upon startup, and Kubernetes is progressively delaying restart attempts.
+    exact_matches:
+      - "crashloopbackoff"
+      - "pod crashloopbackoff"
+    patterns:
+      - '(?i)\bCrashLoopBackOff\b'
+      - '(?i)Back-off restarting failed container'
+    confirmed_templates:
+      - "Kubernetes pod entered CrashLoopBackOff restart backoff cycle"
+    likely_cause: The container entrypoint command exited with non-zero status due to application crash, missing configuration, or unhandled panic.
+    possible_causes:
+      - Missing required environment variables or secrets
+      - Database connection failed on startup
+      - Container entrypoint binary failed with syntax or runtime error
+      - Liveness probe failure repeatedly killing container
+      - File or directory mount permissions error
+    diagnostic_steps:
+      - command: "kubectl logs <pod-name> --previous"
+        description: "View stdout and stderr logs from the previously crashed container instance"
+      - command: "kubectl describe pod <pod-name>"
+        description: "Inspect Pod lifecycle events, exit code, and termination reasons"
+    potential_solutions:
+      - description: "Fix missing configuration or application crash identified in container logs"
+      - description: "Adjust liveness probe initialDelaySeconds if the container requires more time to initialize"
+    warnings:
+      - "Deleting and recreating a CrashLoopBackOff pod without fixing root cause will only restart the crash loop."
+
+  - id: k8s-imagepullbackoff
+    error: kubernetes imagepullbackoff / errimagepull
+    category: Kubernetes
+    meaning: The Kubelet node failed to download the container image from the container registry.
+    exact_matches:
+      - "imagepullbackoff"
+      - "errimagepull"
+    patterns:
+      - '(?i)\bImagePullBackOff\b'
+      - '(?i)\bErrImagePull\b'
+      - '(?i)Failed to pull image "(?P<image>[^"]+)":\s+rpc error'
+    confirmed_templates:
+      - "Target image: {{if .image}}{{.image}}{{else}}<image>{{end}}"
+      - "Container runtime image pull rejected"
+    likely_cause: The image name or tag is mistyped, the tag does not exist, or the private registry secret (imagePullSecrets) is missing or invalid.
+    possible_causes:
+      - Typo in image repository name or image tag
+      - The registry is private and the Pod spec lacks valid 'imagePullSecrets'
+      - Docker Hub / registry rate limits exceeded
+      - Node has no outbound internet route or network policy blocks registry IP
+    diagnostic_steps:
+      - command: "kubectl describe pod <pod-name>"
+        description: "Inspect the exact Kubelet error event for the image pull failure"
+      - command: "kubectl get secrets"
+        description: "Verify that the required docker-registry secret exists in the target namespace"
+    potential_solutions:
+      - description: "Correct the image name and tag in the deployment manifest"
+      - description: "Attach imagePullSecrets to the Pod specification or default ServiceAccount"
+        command: "kubectl patch serviceaccount default -p '{\"imagePullSecrets\": [{\"name\": \"my-registry-secret\"}]}'"
+    warnings:
+      - "Ensure registry credentials in imagePullSecrets have least-privilege read-only permissions."
+
+  - id: k8s-oomkilled
+    error: kubernetes pod oomkilled
+    category: Kubernetes
+    meaning: The container process was terminated with SIGKILL (Exit code 137) because its memory consumption exceeded the Pod spec memory limit.
+    exact_matches:
+      - "oomkilled"
+      - "pod oomkilled"
+    patterns:
+      - '(?i)\bOOMKilled\b'
+      - '(?i)Exit Code:\s+137\s+\(OOMKilled\)'
+    error_codes:
+      - "137"
+    confirmed_templates:
+      - "Container terminated by Linux cgroups OOM killer (Exit code 137)"
+    likely_cause: The container exceeded the resources.limits.memory value defined in the Kubernetes manifest.
+    possible_causes:
+      - Memory leak in application code
+      - Heavy traffic spike or large file in-memory processing
+      - Java JVM heap not configured to respect cgroup memory limits
+      - Underestimated resources.limits.memory in Deployment manifest
+    diagnostic_steps:
+      - command: "kubectl describe pod <pod-name> | grep -A 5 -i 'last state'"
+        description: "Confirm OOMKilled status and previous exit code"
+      - command: "kubectl top pod <pod-name> --containers"
+        description: "Check live CPU and memory utilization across containers"
+    potential_solutions:
+      - description: "Increase memory limit in deployment spec"
+        command: "kubectl set resources deployment <name> --limits=memory=2Gi"
+    warnings:
+      - "Unbounded memory requests can lead to node-level memory pressure and evictions."

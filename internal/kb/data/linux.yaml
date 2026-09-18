@@ -51,7 +51,7 @@ rules:
       - "command not found"
       - "not found"
     patterns:
-      - '(?i)(?:bash|zsh|sh):\s+(?:command\s+not\s+found:\s+|)(?P<command>[a-zA-Z0-9_\-\.]+)(?::\s+command\s+not\s+found)?'
+      - '(?i)(?:bash|zsh|sh):\s+(?:command\s+not\s+found:\s+(?P<command>[a-zA-Z0-9_\-\.]+)|(?P<command>[a-zA-Z0-9_\-\.]+):\s+command\s+not\s+found)'
       - '(?i)exec:\s+"(?P<command>[^"]+)":\s+executable\s+file\s+not\s+found\s+in\s+\$PATH'
     error_codes:
       - "127"
@@ -295,3 +295,73 @@ rules:
       - description: "Persist increased limits in /etc/security/limits.conf"
     warnings:
       - "Do not set unlimited file descriptors system-wide without verifying memory constraints."
+
+  - id: linux-bad-interpreter
+    error: "bad interpreter: No such file or directory"
+    category: Linux
+    meaning: The operating system kernel cannot execute the script because the interpreter path specified in the shebang (#!) line cannot be found.
+    exact_matches:
+      - "bad interpreter"
+      - "bad interpreter: no such file or directory"
+    patterns:
+      - '(?i)(?:bash|zsh|sh):\s+(?P<script>\S+):\s+(?P<interp>\S+):\s+bad interpreter:\s+No such file or directory'
+      - '(?i)bad interpreter:\s+No such file or directory'
+    confirmed_templates:
+      - "Script: {{if .script}}{{.script}}{{else}}<script>{{end}}"
+      - "Interpreter path: {{if .interp}}{{.interp}}{{else}}<interpreter>{{end}}"
+      - "Kernel execve failed to resolve shebang interpreter"
+    likely_cause: Windows CRLF (carriage return \r) line endings in the script file causing the kernel to search for an interpreter like '/bin/bash\r', or the interpreter is not installed at that path.
+    possible_causes:
+      - Script was edited or cloned on Windows with CRLF line endings (\r\n)
+      - "Shebang specifies a hardcoded path that does not exist (e.g. #!/bin/python instead of #!/usr/bin/env python3)"
+      - Script was executed in a minimal container (Alpine) where /bin/bash does not exist (only /bin/sh)
+    diagnostic_steps:
+      - command: "file {{if .script}}{{.script}}{{else}}<script>{{end}}"
+        description: "Check file type and line terminators (look for 'with CRLF line terminators')"
+      - command: "head -n 1 {{if .script}}{{.script}}{{else}}<script>{{end}} | cat -A"
+        description: "View the exact shebang line showing hidden carriage return characters (^M)"
+    potential_solutions:
+      - description: "Convert CRLF line endings to standard Unix LF using dos2unix or tr"
+        command: "dos2unix {{if .script}}{{.script}}{{else}}<script>{{end}}"
+      - description: "Or strip carriage returns using sed"
+        command: "sed -i 's/\\r$//' {{if .script}}{{.script}}{{else}}<script>{{end}}"
+      - description: "Use portable env shebang: #!/usr/bin/env bash"
+    warnings:
+      - "Ensure your git config core.autocrlf setting is configured properly to prevent recurring CRLF issues."
+
+  - id: linux-fork-resource-unavailable
+    error: "fork: retry: Resource temporarily unavailable"
+    category: Linux
+    meaning: The kernel cannot spawn a new process because the user or system has reached the maximum process limit (nproc / pid_max).
+    exact_matches:
+      - "fork: retry: resource temporarily unavailable"
+      - "resource temporarily unavailable"
+    patterns:
+      - '(?i)fork:\s+retry:\s+Resource temporarily unavailable'
+      - '(?i)-bash:\s+fork:\s+Resource temporarily unavailable'
+      - '(?i)fork:\s+Cannot allocate memory'
+    error_codes:
+      - "11"
+      - "EAGAIN"
+    confirmed_templates:
+      - "Process creation failed: nproc limit or PID limit reached (EAGAIN)"
+    likely_cause: A runaway process spawned thousands of child threads or processes (fork bomb), or the user's ulimit -u (nproc) is exhausted.
+    possible_causes:
+      - Uncontrolled background process spawning or recursive fork bomb
+      - User's maximum process limit (ulimit -u) reached
+      - System PID exhaustion (kernel pid_max reached)
+      - Container pids limit reached (pids.max in cgroups)
+    diagnostic_steps:
+      - command: "ps -u $USER -L | wc -l"
+        description: "Count the number of active processes and threads currently owned by your user"
+      - command: "ulimit -u"
+        description: "Check the maximum user process limit (nproc)"
+      - command: "cat /proc/sys/kernel/pid_max"
+        description: "Check the system-wide maximum process ID limit"
+    potential_solutions:
+      - description: "Identify and kill runaway process trees owned by the user"
+        command: "pkill -u $USER <process_name>"
+      - description: "Increase maximum process limit in /etc/security/limits.conf"
+    warnings:
+      - "Do not set unlimited nproc for untrusted users as a fork bomb can lock up the entire operating system."
+

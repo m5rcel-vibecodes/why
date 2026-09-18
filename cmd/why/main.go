@@ -1,24 +1,23 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
-	"github.com/m5rcel-vibecodes/why/internal/ai"
 	"github.com/m5rcel-vibecodes/why/internal/config"
 	"github.com/m5rcel-vibecodes/why/internal/extractor"
 	"github.com/m5rcel-vibecodes/why/internal/formatter"
 	"github.com/m5rcel-vibecodes/why/internal/kb"
+	"github.com/m5rcel-vibecodes/why/internal/logscan"
 	"github.com/m5rcel-vibecodes/why/internal/matcher"
 	"github.com/m5rcel-vibecodes/why/internal/model"
 )
 
 var (
-	version = "1.0.0"
+	version = "1.1.0"
 	commit  = "none"
 	date    = "unknown"
 )
@@ -26,7 +25,7 @@ var (
 func main() {
 	var (
 		jsonFlag    bool
-		aiFlag      bool
+		logFlag     string
 		colorFlag   string
 		configPath  string
 		versionFlag bool
@@ -34,7 +33,7 @@ func main() {
 	)
 
 	flag.BoolVar(&jsonFlag, "json", false, "Output explanation in structured JSON format")
-	flag.BoolVar(&aiFlag, "ai", false, "Use optional AI model for explanation (opt-in)")
+	flag.StringVar(&logFlag, "log", "", "Inspect a log file or stream and aggregate all errors")
 	flag.StringVar(&colorFlag, "color", "", "Colorize output: auto, always, never")
 	flag.StringVar(&configPath, "config", "", "Path to configuration file")
 	flag.BoolVar(&versionFlag, "version", false, "Print version and exit")
@@ -84,8 +83,45 @@ func main() {
 
 	ruleMatcher := matcher.New(knowledgeBase)
 
-	// Collect input from arguments or stdin
 	args := flag.Args()
+
+	// Check if user requested log inspection via subcommand or flag:
+	// e.g. `why log <file>` or `why log -` or `why --log <file>`
+	isLogCommand := false
+	logTarget := logFlag
+
+	if len(args) > 0 && (args[0] == "log" || args[0] == "inspect") {
+		isLogCommand = true
+		if len(args) > 1 {
+			logTarget = args[1]
+		} else {
+			logTarget = "-"
+		}
+	} else if logFlag != "" {
+		isLogCommand = true
+	}
+
+	if isLogCommand {
+		report, err := logscan.ScanFile(logTarget, ruleMatcher)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Log inspection error: %v\n", err)
+			os.Exit(1)
+		}
+
+		if cfg.JSON {
+			output, err := logscan.FormatJSONReport(report)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "JSON formatting error: %v\n", err)
+				os.Exit(1)
+			}
+			fmt.Println(string(output))
+		} else {
+			fmt.Print(logscan.FormatTerminalReport(report, styler))
+		}
+		return
+	}
+
+	// Standard error lookup mode
 	var query string
 	var matchResult *model.MatchResult
 
@@ -105,22 +141,6 @@ func main() {
 	if query == "" {
 		printUsage()
 		os.Exit(0)
-	}
-
-	// Handle AI opt-in if requested
-	if aiFlag {
-		aiClient := ai.NewClient(&cfg.AI)
-		aiResult, aiErr := aiClient.Query(context.Background(), query)
-		if aiErr != nil {
-			if !cfg.JSON {
-				fmt.Fprintf(os.Stderr, "%s\n", styler.Red(fmt.Sprintf("AI Explanation Error: %v", aiErr)))
-				if matchResult != nil {
-					fmt.Fprintf(os.Stderr, "%s\n\n", styler.Dim("Falling back to local knowledge base explanation:"))
-				}
-			}
-		} else {
-			matchResult = aiResult
-		}
 	}
 
 	// Output formatting
@@ -154,10 +174,10 @@ func normalizeArgs(args []string) []string {
 			pos = append(pos, args[i+1:]...)
 			break
 		}
-		if strings.HasPrefix(arg, "-") {
+		if strings.HasPrefix(arg, "-") && arg != "-" {
 			flags = append(flags, arg)
 			// Check if flag takes a separate argument
-			if (arg == "--color" || arg == "-color" || arg == "--config" || arg == "-config") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			if (arg == "--color" || arg == "-color" || arg == "--config" || arg == "-config" || arg == "--log" || arg == "-log") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				i++
 				flags = append(flags, args[i])
 			}
@@ -174,9 +194,11 @@ func printUsage() {
 USAGE:
   why "<error message>"
   why <error message>
+  why log <log-file-path>
   <command> 2>&1 | why
+  <command> 2>&1 | why log -
 
-EXAMPLES:
+ERROR LOOKUP EXAMPLES:
   why "permission denied"
   why "connection refused"
   why "command not found"
@@ -185,18 +207,25 @@ EXAMPLES:
   git push 2>&1 | why
   docker run nginx 2>&1 | why
 
+LOG INSPECTION EXAMPLES:
+  why log /var/log/nginx/error.log
+  why log app.log
+  why log app.log --json
+  journalctl -u myapp -n 100 | why log -
+
 FLAGS:
-  --json          Output structured JSON for scripts and integrations
-  --ai            Opt-in to AI-assisted analysis (requires GEMINI_API_KEY, OPENAI_API_KEY, or local Ollama)
+  --json          Output explanation in structured JSON format
+  --log <path>    Inspect a log file and aggregate all detected errors
   --color <mode>  Color mode: auto (default), always, never
   --config <path> Path to custom configuration file (~/.config/why/config.yaml)
   -v, --version   Print version information
   -h, --help      Show this help message
 
 KNOWLEDGE BASE:
-  Covers Linux, Git, Docker, systemd, OpenRC, Networking, DNS, HTTP, TLS,
-  Package Managers (apt, pacman, npm, pip, brew), Node.js, Python, Go, and .NET.
-  Runs 100% locally and deterministically without network access.
+  Covers Linux, Git, Docker, Kubernetes, Databases (Postgres, MySQL, Redis), SSH,
+  systemd, OpenRC, Networking, DNS, HTTP, TLS, Package Managers (apt, pacman, npm, pip, brew),
+  Node.js, Python, Go, Rust, Java, and .NET.
+  Runs 100% locally and deterministically without network or AI dependencies.
 `
 	io.WriteString(os.Stdout, usageText)
 }

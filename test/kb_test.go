@@ -32,6 +32,11 @@ func TestKnowledgeBaseIntegrity(t *testing.T) {
 		"Python",
 		"Go",
 		".NET",
+		"SSH",
+		"Database",
+		"Kubernetes",
+		"Rust",
+		"Java",
 	}
 
 	categoryCounts := make(map[string]int)
